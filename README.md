@@ -498,15 +498,17 @@ On pull requests, benchmarks are compared against `main` using `benchstat` to ca
 
 ## Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `github.com/tree-sitter/go-tree-sitter` | Tree-sitter Go bindings |
-| `github.com/BurntSushi/toml` | TOML config parsing |
-| `github.com/fsnotify/fsnotify` | File watching for config hot-reload |
-| `golang.org/x/net` | WebSocket transport |
+| Package                                 | Purpose                             |
+| --------------------------------------- | ----------------------------------- |
+| `github.com/tree-sitter/go-tree-sitter` | Tree-sitter Go bindings             |
+| `github.com/BurntSushi/toml`            | TOML config parsing                 |
+| `github.com/fsnotify/fsnotify`          | File watching for config hot-reload |
+| `golang.org/x/net`                      | WebSocket transport                 |
 
 The core framework (JSON-RPC + stdio) has zero external dependencies.
 
 ## License
 
 MIT
+
+This repo was 100% created by AI
