@@ -7,7 +7,7 @@ package document
 import (
 	"sync"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // Store is a thread-safe store of open text documents. It automatically

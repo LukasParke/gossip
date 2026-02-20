@@ -1,6 +1,6 @@
 package gossip
 
-import "github.com/gossip-lsp/gossip/protocol"
+import "github.com/LukasParke/gossip/protocol"
 
 // buildCapabilities inspects which handlers are registered and returns
 // a ServerCapabilities struct that accurately reflects what the server supports.

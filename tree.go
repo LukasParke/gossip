@@ -1,9 +1,9 @@
 package gossip
 
 import (
-	"github.com/gossip-lsp/gossip/document"
-	"github.com/gossip-lsp/gossip/protocol"
-	"github.com/gossip-lsp/gossip/treesitter"
+	"github.com/LukasParke/gossip/document"
+	"github.com/LukasParke/gossip/protocol"
+	"github.com/LukasParke/gossip/treesitter"
 )
 
 // TreeFor returns the tree-sitter tree for the given document, or nil if

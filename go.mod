@@ -1,4 +1,4 @@
-module github.com/gossip-lsp/gossip
+module github.com/LukasParke/gossip
 
 go 1.25.0
 

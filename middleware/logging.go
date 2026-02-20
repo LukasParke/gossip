@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/jsonrpc"
 )
 
 // Logging returns middleware that logs each request's method, duration, and errors.

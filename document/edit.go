@@ -1,6 +1,6 @@
 package document
 
-import "github.com/gossip-lsp/gossip/protocol"
+import "github.com/LukasParke/gossip/protocol"
 
 // ApplyChanges applies a set of LSP content change events to document text.
 // Supports both full and incremental sync.

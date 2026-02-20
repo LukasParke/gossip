@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/jsonrpc"
 )
 
 // Metrics holds request counts and duration statistics per method.

@@ -3,7 +3,7 @@ package document
 import (
 	"sync"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // Document represents a single managed text document.

@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/gossip-lsp/gossip"
-	"github.com/gossip-lsp/gossip/middleware"
-	"github.com/gossip-lsp/gossip/protocol"
-	"github.com/gossip-lsp/gossip/treesitter"
+	"github.com/LukasParke/gossip"
+	"github.com/LukasParke/gossip/middleware"
+	"github.com/LukasParke/gossip/protocol"
+	"github.com/LukasParke/gossip/treesitter"
 )
 
 type Config struct {

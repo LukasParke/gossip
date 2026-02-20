@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // FileURI creates a file:// URI from a path.

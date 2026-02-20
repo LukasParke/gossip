@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/gossip-lsp/gossip/document"
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/document"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // Context wraps context.Context with convenient accessors for LSP services.

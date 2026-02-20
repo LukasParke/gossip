@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gossip-lsp/gossip"
-	"github.com/gossip-lsp/gossip/jsonrpc"
-	"github.com/gossip-lsp/gossip/protocol"
-	"github.com/gossip-lsp/gossip/transport"
+	"github.com/LukasParke/gossip"
+	"github.com/LukasParke/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/protocol"
+	"github.com/LukasParke/gossip/transport"
 )
 
 // Client is a test LSP client that communicates with a server over an

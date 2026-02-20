@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
-	mw "github.com/gossip-lsp/gossip/middleware"
-	"github.com/gossip-lsp/gossip/transport"
+	"github.com/LukasParke/gossip/jsonrpc"
+	mw "github.com/LukasParke/gossip/middleware"
+	"github.com/LukasParke/gossip/transport"
 )
 
 

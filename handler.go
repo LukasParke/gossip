@@ -3,7 +3,7 @@ package gossip
 import (
 	"encoding/json"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // RawHandler processes a JSON-RPC request with raw params. Use HandleRequest

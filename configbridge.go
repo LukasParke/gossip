@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	gossipconfig "github.com/gossip-lsp/gossip/config"
+	gossipconfig "github.com/LukasParke/gossip/config"
 )
 
 // configHolder is stored on the server as an interface{} to allow generic config types.

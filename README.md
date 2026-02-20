@@ -4,7 +4,7 @@ A best-in-class Go framework for building Language Server Protocol (LSP) servers
 
 Gossip gives you everything you need to build a production-quality LSP server in Go: code-generated protocol types, composable middleware, built-in document management, native tree-sitter integration with incremental diagnostics, config hot-reload, multi-root workspace support, and full cross-editor transport support.
 
-[![CI](https://github.com/gossip-lsp/gossip/actions/workflows/ci.yml/badge.svg)](https://github.com/gossip-lsp/gossip/actions/workflows/ci.yml)
+[![CI](https://github.com/LukasParke/gossip/actions/workflows/ci.yml/badge.svg)](https://github.com/LukasParke/gossip/actions/workflows/ci.yml)
 
 ## Features
 
@@ -29,8 +29,8 @@ package main
 import (
     "log"
 
-    "github.com/gossip-lsp/gossip"
-    "github.com/gossip-lsp/gossip/protocol"
+    "github.com/LukasParke/gossip"
+    "github.com/LukasParke/gossip/protocol"
 )
 
 func main() {
@@ -114,8 +114,8 @@ Native tree-sitter support gives you incremental parsing for free. Trees are aut
 
 ```go
 import (
-    "github.com/gossip-lsp/gossip"
-    "github.com/gossip-lsp/gossip/treesitter"
+    "github.com/LukasParke/gossip"
+    "github.com/LukasParke/gossip/treesitter"
     tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 )
 
@@ -492,7 +492,7 @@ In Zed settings:
 
 Performance is tracked on every push to `main`. Benchmarks cover initial parse, incremental edits, query scoping, analyzer skip logic, merge performance, and end-to-end diagnostic cycles across Go, Python, JSON, and YAML.
 
-View the [benchmark dashboard](https://gossip-lsp.github.io/gossip/dev/bench/) for historical trends.
+View the [benchmark dashboard](https://LukasParke.github.io/gossip/dev/bench/) for historical trends.
 
 On pull requests, benchmarks are compared against `main` using `benchstat` to catch performance regressions before they are merged.
 

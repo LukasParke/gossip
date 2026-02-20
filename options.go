@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gossip-lsp/gossip/middleware"
-	"github.com/gossip-lsp/gossip/transport"
-	"github.com/gossip-lsp/gossip/treesitter"
+	"github.com/LukasParke/gossip/middleware"
+	"github.com/LukasParke/gossip/transport"
+	"github.com/LukasParke/gossip/treesitter"
 )
 
 // Option configures a Server during construction.

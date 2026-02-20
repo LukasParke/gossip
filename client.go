@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // ClientProxy sends requests and notifications from server to client.

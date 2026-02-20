@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/gossip-lsp/gossip"
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 type Config struct {

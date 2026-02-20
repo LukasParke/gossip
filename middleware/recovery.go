@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"runtime/debug"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/jsonrpc"
 )
 
 // Recovery returns middleware that recovers from panics in handlers,

@@ -14,9 +14,9 @@ import (
 	ts_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 	ts_yaml "github.com/tree-sitter-grammars/tree-sitter-yaml/bindings/go"
 
-	"github.com/gossip-lsp/gossip/document"
-	"github.com/gossip-lsp/gossip/protocol"
-	"github.com/gossip-lsp/gossip/treesitter"
+	"github.com/LukasParke/gossip/document"
+	"github.com/LukasParke/gossip/protocol"
+	"github.com/LukasParke/gossip/treesitter"
 )
 
 // ---------------------------------------------------------------------------

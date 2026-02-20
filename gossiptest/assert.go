@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // AssertHoverContains asserts that the hover result contains the expected substring.

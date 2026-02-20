@@ -7,8 +7,8 @@ import (
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/gossip-lsp/gossip/document"
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/document"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // PublishFunc sends diagnostics to the LSP client. The server layer provides

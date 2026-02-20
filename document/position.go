@@ -5,7 +5,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // OffsetAt converts an LSP Position (line, UTF-16 character offset) to a byte

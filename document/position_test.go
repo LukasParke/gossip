@@ -3,7 +3,7 @@ package document
 import (
 	"testing"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 func TestOffsetAt(t *testing.T) {

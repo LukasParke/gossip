@@ -3,7 +3,7 @@ package middleware
 import (
 	"context"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/jsonrpc"
 )
 
 // Tracing returns middleware that creates a span for each request.

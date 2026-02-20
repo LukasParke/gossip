@@ -6,7 +6,7 @@ package treesitter
 import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // Config configures the tree-sitter integration.

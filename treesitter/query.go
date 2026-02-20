@@ -3,7 +3,7 @@ package treesitter
 import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 // NodeAt returns the most specific (deepest) node at the given LSP position.

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gossip-lsp/gossip/document"
-	"github.com/gossip-lsp/gossip/jsonrpc"
-	mw "github.com/gossip-lsp/gossip/middleware"
-	"github.com/gossip-lsp/gossip/protocol"
-	"github.com/gossip-lsp/gossip/treesitter"
+	"github.com/LukasParke/gossip/document"
+	"github.com/LukasParke/gossip/jsonrpc"
+	mw "github.com/LukasParke/gossip/middleware"
+	"github.com/LukasParke/gossip/protocol"
+	"github.com/LukasParke/gossip/treesitter"
 )
 
 // Server is the central type of the gossip framework. It registers handlers,

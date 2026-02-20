@@ -3,9 +3,9 @@ package gossiptest_test
 import (
 	"testing"
 
-	"github.com/gossip-lsp/gossip"
-	"github.com/gossip-lsp/gossip/gossiptest"
-	"github.com/gossip-lsp/gossip/protocol"
+	"github.com/LukasParke/gossip"
+	"github.com/LukasParke/gossip/gossiptest"
+	"github.com/LukasParke/gossip/protocol"
 )
 
 func TestClientHover(t *testing.T) {

@@ -6,7 +6,7 @@ package middleware
 import (
 	"context"
 
-	"github.com/gossip-lsp/gossip/jsonrpc"
+	"github.com/LukasParke/gossip/jsonrpc"
 )
 
 // Handler processes a JSON-RPC method call and returns a result.
