@@ -21,7 +21,9 @@ type ipcTransport struct {
 
 func (t *ipcTransport) Read(p []byte) (int, error)  { return t.reader.Read(p) }
 func (t *ipcTransport) Write(p []byte) (int, error) { return t.writer.Write(p) }
+
+// Close closes the IPC reader (fd 3). The writer (stdout) is intentionally
+// left open because it is a shared resource owned by the process.
 func (t *ipcTransport) Close() error {
-	t.reader.Close()
-	return nil
+	return t.reader.Close()
 }

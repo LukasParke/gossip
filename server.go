@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/LukasParke/gossip/document"
 	"github.com/LukasParke/gossip/jsonrpc"
@@ -54,15 +55,23 @@ type Server struct {
 	clientCaps       protocol.ClientCapabilities
 	initOptions      json.RawMessage
 
+	// capability configuration
+	completionTriggerChars  []string
+	signatureHelpTriggerChars []string
+	semanticTokensLegend    *protocol.SemanticTokensLegend
+	executeCommands         []string
+
 	// options
 	opts []Option
 
-	// lifecycle state
-	initialized bool
-	shutdown    bool
+	// lifecycle state (accessed from multiple goroutines)
+	initialized atomic.Bool
+	shutdown    atomic.Bool
 }
 
 // NewServer creates a new gossip LSP server with the given name and version.
+// Options are applied when Serve is called, not at construction. Name and
+// version are included in InitializeResult.ServerInfo.
 func NewServer(name, version string, opts ...Option) *Server {
 	s := &Server{
 		name:             name,
@@ -102,6 +111,19 @@ func (s *Server) OnRangeFormatting(h RangeFormattingHandler)       { s.register(
 func (s *Server) OnDocumentLink(h DocumentLinkHandler)             { s.register(protocol.MethodDocumentLink, h) }
 func (s *Server) OnSelectionRange(h SelectionRangeHandler)         { s.register(protocol.MethodSelectionRange, h) }
 func (s *Server) OnExecuteCommand(h ExecuteCommandHandler)         { s.register(protocol.MethodExecuteCommand, h) }
+
+// LSP 3.18 features
+func (s *Server) OnSemanticTokensRange(h SemanticTokensRangeHandler)     { s.register(protocol.MethodSemanticTokensRange, h) }
+func (s *Server) OnCompletionResolve(h CompletionResolveHandler)         { s.register(protocol.MethodCompletionResolve, h) }
+func (s *Server) OnDocumentLinkResolve(h DocumentLinkResolveHandler)     { s.register(protocol.MethodDocumentLinkResolve, h) }
+func (s *Server) OnDocumentDiagnostic(h DocumentDiagnosticHandler)       { s.register(protocol.MethodDocumentDiagnostic, h) }
+func (s *Server) OnLinkedEditingRange(h LinkedEditingRangeHandler)       { s.register(protocol.MethodLinkedEditingRange, h) }
+func (s *Server) OnPrepareCallHierarchy(h PrepareCallHierarchyHandler)   { s.register(protocol.MethodPrepareCallHierarchy, h) }
+func (s *Server) OnCallHierarchyIncoming(h CallHierarchyIncomingHandler) { s.register(protocol.MethodCallHierarchyIncoming, h) }
+func (s *Server) OnCallHierarchyOutgoing(h CallHierarchyOutgoingHandler) { s.register(protocol.MethodCallHierarchyOutgoing, h) }
+func (s *Server) OnPrepareTypeHierarchy(h PrepareTypeHierarchyHandler)   { s.register(protocol.MethodPrepareTypeHierarchy, h) }
+func (s *Server) OnTypeHierarchySupertypes(h TypeHierarchySupertypesHandler) { s.register(protocol.MethodTypeHierarchySupertypes, h) }
+func (s *Server) OnTypeHierarchySubtypes(h TypeHierarchySubtypesHandler)     { s.register(protocol.MethodTypeHierarchySubtypes, h) }
 
 // Notification handlers
 func (s *Server) OnDidOpen(h DidOpenHandler)     { s.register(protocol.MethodDidOpen, h) }
@@ -151,7 +173,8 @@ func (s *Server) Documents() *document.Store { return s.docStore }
 // Logger returns the server's logger.
 func (s *Server) Logger() *slog.Logger { return s.logger }
 
-// Conn returns the JSON-RPC connection, or nil before Serve() is called.
+// Conn returns the JSON-RPC connection used for client communication. Returns
+// nil until Serve has been called and the connection is established.
 func (s *Server) Conn() *jsonrpc.Conn { return s.conn }
 
 func (s *Server) register(method string, handler interface{}) {
@@ -179,7 +202,7 @@ func (s *Server) dispatch(ctx context.Context, method string, params jsonrpc.Raw
 		return s.handleShutdown(gctx)
 	}
 
-	if !s.initialized {
+	if !s.initialized.Load() {
 		return nil, &jsonrpc.Error{Code: jsonrpc.CodeServerNotInitialized, Message: "server not initialized"}
 	}
 
@@ -191,6 +214,8 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 	gctx := newContext(ctx, s)
 
 	switch method {
+	case protocol.MethodCancelRequest:
+		return
 	case protocol.MethodInitialized:
 		s.logger.Info("client initialized")
 		return
@@ -199,7 +224,7 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 		if s.conn != nil {
 			s.conn.Close()
 		}
-		if s.shutdown {
+		if s.shutdown.Load() {
 			os.Exit(0)
 		}
 		os.Exit(1)
@@ -207,7 +232,7 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 		return
 	}
 
-	if !s.initialized {
+	if !s.initialized.Load() {
 		return
 	}
 
@@ -225,7 +250,10 @@ func (s *Server) handleInitialize(ctx *Context, params jsonrpc.RawMessage) (inte
 	s.workspaceFolders = p.WorkspaceFolders
 	s.clientCaps = p.Capabilities
 	if p.InitializationOptions != nil {
-		if raw, err := json.Marshal(p.InitializationOptions); err == nil {
+		raw, err := json.Marshal(p.InitializationOptions)
+		if err != nil {
+			s.logger.Warn("failed to marshal initialization options", "error", err)
+		} else {
 			s.initOptions = raw
 		}
 	}
@@ -238,7 +266,7 @@ func (s *Server) handleInitialize(ctx *Context, params jsonrpc.RawMessage) (inte
 	s.mu.Unlock()
 
 	caps := s.buildCapabilities()
-	s.initialized = true
+	s.initialized.Store(true)
 
 	if s.configHolder != nil {
 		s.startConfigWatchers()
@@ -297,7 +325,7 @@ func uriBasename(uri string) string {
 }
 
 func (s *Server) handleShutdown(_ *Context) (interface{}, error) {
-	s.shutdown = true
+	s.shutdown.Store(true)
 	s.logger.Info("server shutting down")
 	return nil, nil
 }
@@ -322,17 +350,23 @@ func (s *Server) dispatchNotificationToHandler(ctx *Context, method string, para
 	switch method {
 	case protocol.MethodDidOpen:
 		var p protocol.DidOpenTextDocumentParams
-		if err := json.Unmarshal(params, &p); err == nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			s.logger.Warn("invalid didOpen params", "error", err)
+		} else {
 			s.docStore.Open(&p)
 		}
 	case protocol.MethodDidChange:
 		var p protocol.DidChangeTextDocumentParams
-		if err := json.Unmarshal(params, &p); err == nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			s.logger.Warn("invalid didChange params", "error", err)
+		} else {
 			s.docStore.Change(&p)
 		}
 	case protocol.MethodDidClose:
 		var p protocol.DidCloseTextDocumentParams
-		if err := json.Unmarshal(params, &p); err == nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			s.logger.Warn("invalid didClose params", "error", err)
+		} else {
 			s.docStore.Close(&p)
 			if s.diagEngine != nil {
 				s.diagEngine.ClearCache(p.TextDocument.URI)
@@ -340,7 +374,9 @@ func (s *Server) dispatchNotificationToHandler(ctx *Context, method string, para
 		}
 	case protocol.MethodDidChangeWorkspaceFolders:
 		var p protocol.DidChangeWorkspaceFoldersParams
-		if err := json.Unmarshal(params, &p); err == nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			s.logger.Warn("invalid didChangeWorkspaceFolders params", "error", err)
+		} else {
 			s.handleWorkspaceFolderChange(p.Event)
 		}
 	}
@@ -380,14 +416,21 @@ func (s *Server) handleWorkspaceFolderChange(event protocol.WorkspaceFoldersChan
 	)
 }
 
-// HandleRequest registers a raw handler for a custom or unhandled LSP method.
+// HandleRequest registers a raw handler for a custom or unhandled LSP
+// request method. The handler receives json.RawMessage params and returns
+// (result, error). Use for methods without a typed handler (e.g., custom
+// extensions or future LSP methods).
 func (s *Server) HandleRequest(method string, h RawHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rawHandlers[method] = h
 }
 
-// HandleNotification registers a raw handler for a custom or unhandled LSP notification.
+// HandleNotification registers a raw handler for a custom or unhandled LSP
+// notification. The handler receives json.RawMessage params and does not
+// return a result. Notifications for textDocument/didOpen, didChange, didClose
+// and workspace/didChangeWorkspaceFolders are processed by the framework
+// before handler invocation.
 func (s *Server) HandleNotification(method string, h RawNotificationHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -395,7 +438,8 @@ func (s *Server) HandleNotification(method string, h RawNotificationHandler) {
 }
 
 // FolderFor returns the workspace folder that contains the given document URI,
-// using longest-prefix matching. Returns nil if no folder matches.
+// using longest-prefix matching so nested folders win over parents. Returns
+// nil if no folder matches or before initialization.
 func (s *Server) FolderFor(uri protocol.DocumentURI) *protocol.WorkspaceFolder {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -575,6 +619,83 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
 		return handler.(ExecuteCommandHandler)(ctx, &p)
+
+	case protocol.MethodSemanticTokensRange:
+		var p protocol.SemanticTokensRangeParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(SemanticTokensRangeHandler)(ctx, &p)
+
+	case protocol.MethodCompletionResolve:
+		var p protocol.CompletionItem
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(CompletionResolveHandler)(ctx, &p)
+
+	case protocol.MethodDocumentLinkResolve:
+		var p protocol.DocumentLink
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(DocumentLinkResolveHandler)(ctx, &p)
+
+	case protocol.MethodDocumentDiagnostic:
+		var p protocol.DocumentDiagnosticParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(DocumentDiagnosticHandler)(ctx, &p)
+
+	case protocol.MethodLinkedEditingRange:
+		var p protocol.LinkedEditingRangeParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(LinkedEditingRangeHandler)(ctx, &p)
+
+	case protocol.MethodPrepareCallHierarchy:
+		var p protocol.CallHierarchyPrepareParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(PrepareCallHierarchyHandler)(ctx, &p)
+
+	case protocol.MethodCallHierarchyIncoming:
+		var p protocol.CallHierarchyIncomingCallsParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(CallHierarchyIncomingHandler)(ctx, &p)
+
+	case protocol.MethodCallHierarchyOutgoing:
+		var p protocol.CallHierarchyOutgoingCallsParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(CallHierarchyOutgoingHandler)(ctx, &p)
+
+	case protocol.MethodPrepareTypeHierarchy:
+		var p protocol.TypeHierarchyPrepareParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(PrepareTypeHierarchyHandler)(ctx, &p)
+
+	case protocol.MethodTypeHierarchySupertypes:
+		var p protocol.TypeHierarchySupertypesParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(TypeHierarchySupertypesHandler)(ctx, &p)
+
+	case protocol.MethodTypeHierarchySubtypes:
+		var p protocol.TypeHierarchySubtypesParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
+		}
+		return handler.(TypeHierarchySubtypesHandler)(ctx, &p)
 
 	// Notification handlers
 	case protocol.MethodDidOpen:

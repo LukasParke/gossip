@@ -10,6 +10,8 @@ import (
 )
 
 // Context wraps context.Context with convenient accessors for LSP services.
+// It is passed to every request and notification handler. Client and Documents
+// are set once the server is running; Client may be nil before initialization.
 type Context struct {
 	context.Context
 
@@ -27,7 +29,7 @@ func newContext(ctx context.Context, s *Server) *Context {
 	}
 }
 
-// ServerInfo returns the server's name and version.
+// ServerInfo returns the server's name and version from InitializeResult.
 func (c *Context) ServerInfo() protocol.ServerInfo {
 	return protocol.ServerInfo{
 		Name:    c.server.name,
@@ -40,13 +42,14 @@ func (c *Context) Server() *Server {
 	return c.server
 }
 
-// Logger returns the server's logger.
+// Logger returns the server's slog logger for structured logging.
 func (c *Context) Logger() *slog.Logger {
 	return c.server.logger
 }
 
-// WorkspaceRoot returns the primary workspace root URI. This is the first
-// workspace folder, or the rootURI from InitializeParams if no folders were sent.
+// WorkspaceRoot returns the primary workspace root URI. Prefers the first
+// workspace folder; falls back to rootURI from InitializeParams if no folders
+// were provided.
 func (c *Context) WorkspaceRoot() protocol.DocumentURI {
 	c.server.mu.RLock()
 	defer c.server.mu.RUnlock()
@@ -59,7 +62,7 @@ func (c *Context) WorkspaceRoot() protocol.DocumentURI {
 	return ""
 }
 
-// WorkspaceFolders returns all current workspace folders. The returned slice
+// WorkspaceFolders returns a copy of all current workspace folders. The result
 // reflects dynamic adds/removes via workspace/didChangeWorkspaceFolders.
 func (c *Context) WorkspaceFolders() []protocol.WorkspaceFolder {
 	c.server.mu.RLock()
@@ -70,19 +73,22 @@ func (c *Context) WorkspaceFolders() []protocol.WorkspaceFolder {
 }
 
 // FolderFor returns the workspace folder that contains the given document URI,
-// using longest-prefix matching. Returns nil if no folder matches.
+// using longest-prefix matching. Returns nil if no folder matches. Delegates
+// to Server.FolderFor.
 func (c *Context) FolderFor(uri protocol.DocumentURI) *protocol.WorkspaceFolder {
 	return c.server.FolderFor(uri)
 }
 
-// ClientCapabilities returns the capabilities sent by the client during initialization.
+// ClientCapabilities returns the capabilities the client sent during initialize.
+// Use to decide which features to enable or how to adapt behavior.
 func (c *Context) ClientCapabilities() protocol.ClientCapabilities {
 	c.server.mu.RLock()
 	defer c.server.mu.RUnlock()
 	return c.server.clientCaps
 }
 
-// InitOptions returns the raw initializationOptions sent by the client.
+// InitOptions returns the raw initializationOptions from the client's
+// initialize request. Parse as needed for server-specific configuration.
 func (c *Context) InitOptions() json.RawMessage {
 	c.server.mu.RLock()
 	defer c.server.mu.RUnlock()

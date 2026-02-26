@@ -1,0 +1,447 @@
+{
+  "scenarios": [
+    {
+      "name": "single_error_unquoted_value",
+      "description": "Unquoted value produces a single deduplicated ERROR at the tightest range",
+      "source": "{\"broken\": bad}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 11
+            },
+            "end": {
+              "line": 0,
+              "character": 14
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "multiline_error_on_line2",
+      "description": "Error on a specific line in multi-line JSON, deduplicated to tightest range",
+      "source": "{\n  \"a\": 1,\n  \"b\": bad,\n  \"c\": 3\n}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 7
+            },
+            "end": {
+              "line": 2,
+              "character": 10
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "multiple_errors_different_lines",
+      "description": "Two unquoted values on separate lines produce two distinct deduplicated ERROR ranges",
+      "source": "{\n  \"a\": bad1,\n  \"b\": bad2\n}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 7
+            },
+            "end": {
+              "line": 1,
+              "character": 10
+            }
+          }
+        },
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 7
+            },
+            "end": {
+              "line": 2,
+              "character": 10
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "utf8_two_byte_error",
+      "description": "Error after 2-byte UTF-8 char validates UTF-16 offset with deduplication",
+      "source": "{\"café\": bad}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 9
+            },
+            "end": {
+              "line": 0,
+              "character": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "utf8_four_byte_emoji_error",
+      "description": "Error after 4-byte emoji validates surrogate pair offset with deduplication",
+      "source": "{\"a😀b\": bad}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 9
+            },
+            "end": {
+              "line": 0,
+              "character": 12
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "nested_object_error",
+      "description": "Error inside nested object structure, deduplicated",
+      "source": "{\"outer\": {\"inner\": bad}}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 20
+            },
+            "end": {
+              "line": 0,
+              "character": 23
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "nested_array_error",
+      "description": "Error inside nested array, deduplicated",
+      "source": "{\"arr\": [1, bad, 3]}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 12
+            },
+            "end": {
+              "line": 0,
+              "character": 15
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "valid_json_no_diagnostics",
+      "description": "Valid JSON produces zero diagnostics",
+      "source": "{\"key\": \"value\", \"num\": 42, \"arr\": [1, 2, 3]}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "empty_object_no_diagnostics",
+      "description": "Empty object is valid, zero diagnostics",
+      "source": "{}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "error_at_start",
+      "description": "Error at the very beginning of the document, deduplicated",
+      "source": "bad",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 0
+            },
+            "end": {
+              "line": 0,
+              "character": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "trailing_comma_error",
+      "description": "Trailing comma in object",
+      "source": "{\"a\": 1, \"b\": 2,}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 15
+            },
+            "end": {
+              "line": 0,
+              "character": 16
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "multiline_utf8_errors",
+      "description": "UTF-8 keys on multiple lines with errors, deduplicated with correct UTF-16 offsets",
+      "source": "{\n  \"naïve\": 1,\n  \"résumé\": bad\n}",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 12
+            },
+            "end": {
+              "line": 2,
+              "character": 15
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "error_at_end_of_file",
+      "description": "Unterminated object detected via MISSING node analyzer",
+      "source": "{\"a\": 1",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "analyzers": [
+        {
+          "name": "missing-tokens",
+          "type": "missing-nodes"
+        }
+      ],
+      "expected": [
+        {
+          "message": "expected }",
+          "severity": 1,
+          "source": "missing-tokens",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 7
+            },
+            "end": {
+              "line": 0,
+              "character": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing_closing_bracket",
+      "description": "Unterminated array detected via MISSING node analyzer",
+      "source": "{\"arr\": [1, 2",
+      "language": ".json",
+      "checks": [
+        {
+          "name": "syntax-errors",
+          "pattern": "(ERROR) @error",
+          "severity": 1,
+          "message": "syntax error",
+          "deduplicate_nested": true
+        }
+      ],
+      "analyzers": [
+        {
+          "name": "missing-tokens",
+          "type": "missing-nodes"
+        }
+      ],
+      "expected": [
+        {
+          "message": "syntax error",
+          "severity": 1,
+          "source": "syntax-errors",
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 0
+            },
+            "end": {
+              "line": 0,
+              "character": 13
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

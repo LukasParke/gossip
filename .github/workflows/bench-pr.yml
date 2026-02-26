@@ -26,12 +26,12 @@ jobs:
       - name: Benchmark main
         run: |
           git checkout main
-          go test ./treesitter/ -bench=. -benchmem -count=5 -timeout=30m > main.txt
+          go test ./... -run='^$' -bench=. -benchmem -count=5 -timeout=30m > main.txt
 
       - name: Benchmark PR
         run: |
           git checkout ${{ github.event.pull_request.head.sha }}
-          go test ./treesitter/ -bench=. -benchmem -count=5 -timeout=30m > pr.txt
+          go test ./... -run='^$' -bench=. -benchmem -count=5 -timeout=30m > pr.txt
 
       - name: Compare with benchstat
         id: benchstat

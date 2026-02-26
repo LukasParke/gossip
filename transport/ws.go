@@ -15,11 +15,11 @@ import (
 // Used by Monaco, Theia, and other web-based editors.
 func ListenWebSocket(addr string) (Transport, error) {
 	connCh := make(chan *websocket.Conn, 1)
+	errCh := make(chan error, 1)
 
 	handler := websocket.Handler(func(ws *websocket.Conn) {
 		connCh <- ws
-		// Block until the connection is closed by the transport
-		select {}
+		select {} // Block until the connection is closed by the transport
 	})
 
 	ln, err := net.Listen("tcp", addr)
@@ -30,12 +30,17 @@ func ListenWebSocket(addr string) (Transport, error) {
 	srv := &http.Server{Handler: handler}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("websocket server error: %v\n", err)
+			errCh <- fmt.Errorf("websocket server error: %w", err)
 		}
 	}()
 
-	ws := <-connCh
-	return &wsTransport{conn: ws, srv: srv, ln: ln}, nil
+	select {
+	case ws := <-connCh:
+		return &wsTransport{conn: ws, srv: srv, ln: ln}, nil
+	case err := <-errCh:
+		ln.Close()
+		return nil, err
+	}
 }
 
 type wsTransport struct {

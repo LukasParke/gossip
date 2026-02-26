@@ -5,85 +5,140 @@ import "github.com/LukasParke/gossip/protocol"
 // buildCapabilities inspects which handlers are registered and returns
 // a ServerCapabilities struct that accurately reflects what the server supports.
 func (s *Server) buildCapabilities() protocol.ServerCapabilities {
+	s.mu.RLock()
+	handlers := make(map[string]bool, len(s.handlers))
+	for method := range s.handlers {
+		handlers[method] = true
+	}
+	s.mu.RUnlock()
+
+	has := func(method string) bool { return handlers[method] }
+
 	caps := protocol.ServerCapabilities{}
 
 	syncOpts := &protocol.TextDocumentSyncOptions{
 		OpenClose: true,
 		Change:    protocol.SyncIncremental,
 	}
-	if _, ok := s.getHandler(protocol.MethodDidSave); ok {
+	if has(protocol.MethodDidSave) {
 		syncOpts.Save = &protocol.SaveOptions{IncludeText: true}
 	}
 	caps.TextDocumentSync = syncOpts
 
-	if _, ok := s.getHandler(protocol.MethodHover); ok {
+	if has(protocol.MethodHover) {
 		caps.HoverProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodCompletion); ok {
-		caps.CompletionProvider = &protocol.CompletionOptions{}
+	if has(protocol.MethodCompletion) {
+		opts := &protocol.CompletionOptions{}
+		if len(s.completionTriggerChars) > 0 {
+			opts.TriggerCharacters = s.completionTriggerChars
+		}
+		caps.CompletionProvider = opts
 	}
-	if _, ok := s.getHandler(protocol.MethodDefinition); ok {
+	if has(protocol.MethodDefinition) {
 		caps.DefinitionProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodReferences); ok {
+	if has(protocol.MethodReferences) {
 		caps.ReferencesProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodDocumentSymbol); ok {
+	if has(protocol.MethodDocumentSymbol) {
 		caps.DocumentSymbolProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodCodeAction); ok {
+	if has(protocol.MethodCodeAction) {
 		caps.CodeActionProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodFormatting); ok {
+	if has(protocol.MethodFormatting) {
 		caps.DocumentFormattingProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodRangeFormatting); ok {
+	if has(protocol.MethodRangeFormatting) {
 		caps.DocumentRangeFormattingProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodRename); ok {
-		caps.RenameProvider = true
+	if has(protocol.MethodRename) || has(protocol.MethodPrepareRename) {
+		if has(protocol.MethodPrepareRename) {
+			caps.RenameProvider = protocol.RenameOptions{PrepareProvider: true}
+		} else {
+			caps.RenameProvider = true
+		}
 	}
-	if _, ok := s.getHandler(protocol.MethodPrepareRename); ok {
-		caps.RenameProvider = true
+	if has(protocol.MethodSignatureHelp) {
+		opts := &protocol.SignatureHelpOptions{}
+		if len(s.signatureHelpTriggerChars) > 0 {
+			opts.TriggerCharacters = s.signatureHelpTriggerChars
+		}
+		caps.SignatureHelpProvider = opts
 	}
-	if _, ok := s.getHandler(protocol.MethodSignatureHelp); ok {
-		caps.SignatureHelpProvider = &protocol.SignatureHelpOptions{}
-	}
-	if _, ok := s.getHandler(protocol.MethodDocumentHighlight); ok {
+	if has(protocol.MethodDocumentHighlight) {
 		caps.DocumentHighlightProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodFoldingRange); ok {
+	if has(protocol.MethodFoldingRange) {
 		caps.FoldingRangeProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodInlayHint); ok {
+	if has(protocol.MethodInlayHint) {
 		caps.InlayHintProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodSemanticTokensFull); ok {
-		caps.SemanticTokensProvider = true
+	if has(protocol.MethodSemanticTokensFull) {
+		legend := protocol.SemanticTokensLegend{
+			TokenTypes:     []string{},
+			TokenModifiers: []string{},
+		}
+		if s.semanticTokensLegend != nil {
+			legend = *s.semanticTokensLegend
+		}
+		opts := &protocol.SemanticTokensOptions{
+			Legend: legend,
+			Full:  true,
+		}
+		if has(protocol.MethodSemanticTokensRange) {
+			opts.Range = true
+		}
+		caps.SemanticTokensProvider = opts
 	}
-	if _, ok := s.getHandler(protocol.MethodCodeLens); ok {
+	if has(protocol.MethodCodeLens) {
 		caps.CodeLensProvider = &protocol.CodeLensOptions{}
 	}
-	if _, ok := s.getHandler(protocol.MethodWorkspaceSymbol); ok {
+	if has(protocol.MethodWorkspaceSymbol) {
 		caps.WorkspaceSymbolProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodDeclaration); ok {
+	if has(protocol.MethodDeclaration) {
 		caps.DeclarationProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodTypeDefinition); ok {
+	if has(protocol.MethodTypeDefinition) {
 		caps.TypeDefinitionProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodImplementation); ok {
+	if has(protocol.MethodImplementation) {
 		caps.ImplementationProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodDocumentLink); ok {
+	if has(protocol.MethodDocumentLink) {
 		caps.DocumentLinkProvider = &protocol.DocumentLinkOptions{}
 	}
-	if _, ok := s.getHandler(protocol.MethodSelectionRange); ok {
+	if has(protocol.MethodSelectionRange) {
 		caps.SelectionRangeProvider = true
 	}
-	if _, ok := s.getHandler(protocol.MethodExecuteCommand); ok {
-		caps.ExecuteCommandProvider = &protocol.ExecuteCommandOptions{}
+	if has(protocol.MethodExecuteCommand) {
+		caps.ExecuteCommandProvider = &protocol.ExecuteCommandOptions{
+			Commands: s.executeCommands,
+		}
+	}
+	if has(protocol.MethodLinkedEditingRange) {
+		caps.LinkedEditingRangeProvider = true
+	}
+	if has(protocol.MethodPrepareCallHierarchy) {
+		caps.CallHierarchyProvider = true
+	}
+	if has(protocol.MethodPrepareTypeHierarchy) {
+		caps.TypeHierarchyProvider = true
+	}
+	if has(protocol.MethodDocumentDiagnostic) {
+		caps.DiagnosticProvider = &protocol.DiagnosticOptions{
+			InterFileDependencies: false,
+			WorkspaceDiagnostics:  false,
+		}
+	}
+	if has(protocol.MethodCompletionResolve) && caps.CompletionProvider != nil {
+		caps.CompletionProvider.ResolveProvider = true
+	}
+	if has(protocol.MethodDocumentLinkResolve) && caps.DocumentLinkProvider != nil {
+		caps.DocumentLinkProvider.ResolveProvider = true
 	}
 
 	caps.Workspace = &protocol.ServerWorkspaceCapabilities{

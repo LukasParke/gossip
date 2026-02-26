@@ -39,39 +39,70 @@ func NewConn(codec *Codec, handler Handler, notif NotificationHandler) *Conn {
 	}
 }
 
+type readResult struct {
+	data []byte
+	err  error
+}
+
 // Run reads messages from the connection until it is closed or an error occurs.
 func (c *Conn) Run(ctx context.Context) error {
+	incoming := make(chan readResult, 1)
+	go func() {
+		for {
+			data, err := c.codec.Read()
+			select {
+			case incoming <- readResult{data, err}:
+			case <-c.done:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-c.done:
 			return nil
-		default:
-		}
-
-		data, err := c.codec.Read()
-		if err != nil {
-			select {
-			case <-c.done:
-				return nil
-			default:
-				return fmt.Errorf("reading message: %w", err)
+		case res := <-incoming:
+			if res.err != nil {
+				select {
+				case <-c.done:
+					return nil
+				default:
+					return fmt.Errorf("reading message: %w", res.err)
+				}
+			}
+			msg, err := DecodeMessage(res.data)
+			if err != nil {
+				c.sendParseError(res.data, err)
+				continue
+			}
+			switch m := msg.(type) {
+			case *Request:
+				go c.handleRequest(ctx, m)
+			case *Notification:
+				go c.handleNotification(ctx, m)
+			case *Response:
+				c.handleResponse(m)
 			}
 		}
+	}
+}
 
-		msg, err := DecodeMessage(data)
-		if err != nil {
-			continue
-		}
-
-		switch m := msg.(type) {
-		case *Request:
-			go c.handleRequest(ctx, m)
-		case *Notification:
-			go c.handleNotification(ctx, m)
-		case *Response:
-			c.handleResponse(m)
+// sendParseError attempts to respond with a parse error if the raw data
+// looks like it might contain a request ID.
+func (c *Conn) sendParseError(data []byte, parseErr error) {
+	var probe struct {
+		ID *ID `json:"id,omitempty"`
+	}
+	if json.Unmarshal(data, &probe) == nil && probe.ID != nil && probe.ID.IsValid() {
+		resp := NewResponse(*probe.ID, nil, &Error{Code: CodeParseError, Message: parseErr.Error()})
+		if respData, err := json.Marshal(resp); err == nil {
+			_ = c.codec.Write(respData)
 		}
 	}
 }
@@ -157,9 +188,12 @@ func (c *Conn) Notify(ctx context.Context, method string, params interface{}) er
 	return c.codec.Write(data)
 }
 
-// Close terminates the connection.
+// Close terminates the connection and closes the underlying codec.
 func (c *Conn) Close() {
-	c.closeOnce.Do(func() { close(c.done) })
+	c.closeOnce.Do(func() {
+		close(c.done)
+		c.codec.Close()
+	})
 }
 
 func marshalParams(v interface{}) (RawMessage, error) {

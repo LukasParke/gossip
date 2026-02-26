@@ -30,7 +30,8 @@ func (c *ClientProxy) LogMessage(ctx context.Context, typ protocol.MessageType, 
 	})
 }
 
-// ShowMessage sends a show message notification to the client.
+// ShowMessage sends a show-message notification to the client. The client
+// typically displays this in a popup or status bar; typ controls severity.
 func (c *ClientProxy) ShowMessage(ctx context.Context, typ protocol.MessageType, message string) error {
 	return c.conn.Notify(ctx, protocol.MethodShowMessage, &protocol.ShowMessageParams{
 		Type:    typ,
@@ -38,7 +39,8 @@ func (c *ClientProxy) ShowMessage(ctx context.Context, typ protocol.MessageType,
 	})
 }
 
-// ShowMessageRequest sends a show message request and waits for the user to pick an action.
+// ShowMessageRequest sends a show-message request and blocks until the user
+// selects an action. Returns the chosen action, or nil if cancelled/dismissed.
 func (c *ClientProxy) ShowMessageRequest(ctx context.Context, params *protocol.ShowMessageRequestParams) (*protocol.MessageActionItem, error) {
 	resp, err := c.conn.Call(ctx, protocol.MethodShowMessageRequest, params)
 	if err != nil {
@@ -54,7 +56,8 @@ func (c *ClientProxy) ShowMessageRequest(ctx context.Context, params *protocol.S
 	return &item, nil
 }
 
-// ApplyEdit requests the client to apply a workspace edit.
+// ApplyEdit requests the client to apply a workspace edit. Returns the client's
+// response indicating whether the edit was applied and any failure message.
 func (c *ClientProxy) ApplyEdit(ctx context.Context, params *protocol.ApplyWorkspaceEditParams) (*protocol.ApplyWorkspaceEditResponse, error) {
 	resp, err := c.conn.Call(ctx, protocol.MethodApplyEdit, params)
 	if err != nil {
@@ -67,7 +70,8 @@ func (c *ClientProxy) ApplyEdit(ctx context.Context, params *protocol.ApplyWorks
 	return &result, nil
 }
 
-// Configuration requests configuration values from the client.
+// Configuration requests workspace configuration values from the client. Items
+// correspond to the scopeURIs in params; each item is the client's config for that scope.
 func (c *ClientProxy) Configuration(ctx context.Context, params *protocol.ConfigurationParams) ([]json.RawMessage, error) {
 	resp, err := c.conn.Call(ctx, protocol.MethodWorkspaceConfiguration, params)
 	if err != nil {
@@ -80,32 +84,52 @@ func (c *ClientProxy) Configuration(ctx context.Context, params *protocol.Config
 	return items, nil
 }
 
-// RegisterCapability dynamically registers a capability with the client.
+// RegisterCapability dynamically registers a capability with the client. Use
+// after initialization to enable features the server did not declare statically.
 func (c *ClientProxy) RegisterCapability(ctx context.Context, params *protocol.RegistrationParams) error {
 	_, err := c.conn.Call(ctx, protocol.MethodRegisterCapability, params)
 	return err
 }
 
-// UnregisterCapability dynamically unregisters a capability with the client.
+// UnregisterCapability unregisters a previously registered capability.
 func (c *ClientProxy) UnregisterCapability(ctx context.Context, params *protocol.UnregistrationParams) error {
 	_, err := c.conn.Call(ctx, protocol.MethodUnregisterCapability, params)
 	return err
 }
 
-// RefreshDiagnostics asks the client to re-pull diagnostics.
+// RefreshDiagnostics asks the client to re-request diagnostics. Use when
+// diagnostics change outside of normal request/notification flow.
 func (c *ClientProxy) RefreshDiagnostics(ctx context.Context) error {
 	_, err := c.conn.Call(ctx, protocol.MethodDiagnosticRefresh, nil)
 	return err
 }
 
-// RefreshInlayHints asks the client to re-pull inlay hints.
+// RefreshInlayHints asks the client to re-request inlay hints.
 func (c *ClientProxy) RefreshInlayHints(ctx context.Context) error {
 	_, err := c.conn.Call(ctx, protocol.MethodInlayHintRefresh, nil)
 	return err
 }
 
-// RefreshSemanticTokens asks the client to re-pull semantic tokens.
+// RefreshSemanticTokens asks the client to re-request semantic tokens.
 func (c *ClientProxy) RefreshSemanticTokens(ctx context.Context) error {
 	_, err := c.conn.Call(ctx, protocol.MethodSemanticTokensRefresh, nil)
 	return err
+}
+
+// CreateWorkDoneProgress creates a work-done progress reporter. Use the token
+// with ReportProgress to send begin/progress/end notifications.
+func (c *ClientProxy) CreateWorkDoneProgress(ctx context.Context, token interface{}) error {
+	_, err := c.conn.Call(ctx, protocol.MethodWorkDoneProgressCreate, &protocol.WorkDoneProgressCreateParams{
+		Token: token,
+	})
+	return err
+}
+
+// ReportProgress sends a progress update for a work-done token. Value should
+// be a WorkDoneProgressBegin, WorkDoneProgressReport, or WorkDoneProgressEnd.
+func (c *ClientProxy) ReportProgress(ctx context.Context, token interface{}, value interface{}) error {
+	return c.conn.Notify(ctx, protocol.MethodProgress, &protocol.ProgressParams{
+		Token: token,
+		Value: value,
+	})
 }

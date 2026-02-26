@@ -25,5 +25,23 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./... -timeout 10m
+      - name: Test with coverage
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./... -timeout 10m
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+      - name: Benchmark
+        run: go test -run='^$' -bench=. -benchmem -count=1 ./... -timeout 15m | tee bench.txt
+
+      - name: Upload benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: bench.txt

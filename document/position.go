@@ -9,7 +9,8 @@ import (
 )
 
 // OffsetAt converts an LSP Position (line, UTF-16 character offset) to a byte
-// offset in the document text. Returns -1 if the position is out of range.
+// offset in the document text. If the position is beyond the end of the
+// document, the result is clamped to len(text).
 func OffsetAt(text string, pos protocol.Position) int {
 	line := int(pos.Line)
 	char := int(pos.Character)
@@ -44,14 +45,8 @@ func PositionAt(text string, offset int) protocol.Position {
 		offset = len(text)
 	}
 
-	line := uint32(0)
-	lineStart := 0
-	for i := 0; i < offset; i++ {
-		if text[i] == '\n' {
-			line++
-			lineStart = i + 1
-		}
-	}
+	line := uint32(strings.Count(text[:offset], "\n"))
+	lineStart := strings.LastIndexByte(text[:offset], '\n') + 1
 
 	lineText := text[lineStart:offset]
 	char := bytesToUTF16Offset(lineText)
@@ -122,7 +117,7 @@ func LineAt(text string, line uint32) string {
 // whitespace, punctuation, or document boundaries.
 func WordAt(text string, pos protocol.Position) string {
 	offset := OffsetAt(text, pos)
-	if offset < 0 || offset >= len(text) {
+	if offset >= len(text) {
 		return ""
 	}
 

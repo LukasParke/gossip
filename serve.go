@@ -10,8 +10,14 @@ import (
 )
 
 
-// Serve starts the LSP server using the given transport options.
-// If no ServeOption is provided, stdio is used by default.
+// Serve starts the LSP server using the given transport options and blocks
+// until the connection closes. If no ServeOption is provided, stdio is used.
+//
+// Lifecycle: Serve applies server-level Options (from NewServer), establishes
+// the transport, and sets Conn and Client on the Server. Conn() and
+// Context.Client are only valid after Serve has begun—run Serve in a goroutine
+// if you need to access Conn from elsewhere before the server exits. Serve
+// returns when the client disconnects or sends exit.
 func Serve(s *Server, opts ...ServeOption) error {
 	cfg := &serveConfig{}
 	for _, o := range opts {
@@ -34,6 +40,7 @@ func Serve(s *Server, opts ...ServeOption) error {
 	}
 
 	codec := jsonrpc.NewCodec(cfg.transport, cfg.transport)
+	defer cfg.transport.Close()
 
 	// Wrap dispatch with middleware chain
 	handler := jsonrpc.Handler(s.dispatch)

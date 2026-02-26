@@ -9,8 +9,9 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// Registry maps file extensions, filenames, patterns, and language IDs
-// to tree-sitter languages.
+// Registry maps URIs and filenames to tree-sitter languages via extensions,
+// exact filenames, glob patterns, and LSP language IDs. It is safe for
+// concurrent use. Matchers are evaluated before the extension map.
 type Registry struct {
 	mu        sync.RWMutex
 	languages map[string]*tree_sitter.Language // ext -> language
@@ -32,7 +33,8 @@ func NewRegistry(cfg Config) *Registry {
 	return r
 }
 
-// Register adds a language for a given file extension.
+// Register adds a language for a file extension (e.g., ".go", "go"). Leading
+// dot is added if missing. Overwrites any existing registration for that ext.
 func (r *Registry) Register(ext string, lang *tree_sitter.Language) {
 	if !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
@@ -50,19 +52,17 @@ func (r *Registry) RegisterMatcher(m LanguageMatcher) {
 	r.matchers = append(r.matchers, m)
 }
 
-// LanguageFor returns the tree-sitter language for a given URI or filename.
-// It tries matchers first (in order), then falls back to extension-based lookup.
+// LanguageFor returns the tree-sitter language for a URI or filename. It calls
+// LanguageForURI with an empty languageID. Use LanguageForURI when the LSP
+// languageId is available for better matching.
 func (r *Registry) LanguageFor(uri string) (*tree_sitter.Language, error) {
 	return r.LanguageForURI(uri, "")
 }
 
-// LanguageForURI returns the tree-sitter language for a given URI and optional
-// languageID. It evaluates in this order:
-//  1. Matchers: exact filename match
-//  2. Matchers: languageID match
-//  3. Matchers: glob pattern match
-//  4. Matchers: extension match
-//  5. Extension-based lookup from the Languages map
+// LanguageForURI returns the tree-sitter language for a URI and optional LSP
+// languageId. Evaluation order: (1) matcher exact filename, (2) matcher
+// languageID, (3) matcher glob pattern, (4) matcher extension, (5) Config
+// Languages extension map. Returns an error if no match is found.
 func (r *Registry) LanguageForURI(uri string, languageID string) (*tree_sitter.Language, error) {
 	filename := path.Base(uri)
 	ext := path.Ext(uri)
@@ -125,7 +125,8 @@ func (r *Registry) LanguageForURI(uri string, languageID string) (*tree_sitter.L
 	return nil, fmt.Errorf("no language registered for: %s", uri)
 }
 
-// HasLanguage returns whether a language is registered for the given URI.
+// HasLanguage reports whether a language is registered for the URI (same
+// lookup logic as LanguageForURI, but without returning the language).
 func (r *Registry) HasLanguage(uri string) bool {
 	lang, err := r.LanguageForURI(uri, "")
 	return err == nil && lang != nil

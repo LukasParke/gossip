@@ -15,6 +15,11 @@ type TreeUpdateFunc func(uri protocol.DocumentURI, tree *Tree)
 // Manager manages tree-sitter parsers and trees for all open documents.
 // It is tied to a document.Store and automatically parses on open and re-parses
 // incrementally on change.
+//
+// Parsers are created per-document on open and released on close. Each document
+// has its own tree-sitter Parser instance. OnTreeUpdate callbacks are invoked
+// in registration order after every parse or reparse. Call Close when shutting
+// down to release all parsers and trees.
 type Manager struct {
 	registry *Registry
 	store    *document.Store
@@ -23,7 +28,7 @@ type Manager struct {
 	parsers map[protocol.DocumentURI]*tree_sitter.Parser
 	trees   map[protocol.DocumentURI]*Tree
 
-	onTreeUpdate TreeUpdateFunc
+	onTreeUpdate []TreeUpdateFunc
 }
 
 // NewManager creates a new tree-sitter manager tied to a document store.
@@ -41,11 +46,13 @@ func NewManager(cfg Config, store *document.Store) *Manager {
 	return m
 }
 
-// OnTreeUpdate registers a callback that fires after every parse/reparse.
+// OnTreeUpdate registers a callback that fires after every parse or reparse.
+// Multiple callbacks can be registered; they are invoked in registration order,
+// synchronously within the document store's edit handler.
 func (m *Manager) OnTreeUpdate(fn TreeUpdateFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.onTreeUpdate = fn
+	m.onTreeUpdate = append(m.onTreeUpdate, fn)
 }
 
 // Registry returns the language registry.
@@ -86,7 +93,8 @@ func (m *Manager) handleOpen(doc *document.Document) {
 	m.mu.Lock()
 	m.parsers[uri] = parser
 	m.trees[uri] = wrapped
-	cb := m.onTreeUpdate
+	callbacks := make([]TreeUpdateFunc, len(m.onTreeUpdate))
+	copy(callbacks, m.onTreeUpdate)
 	m.mu.Unlock()
 
 	doc.SetTree(wrapped)
@@ -94,7 +102,7 @@ func (m *Manager) handleOpen(doc *document.Document) {
 		m.handleEdits(uri, edits)
 	})
 
-	if cb != nil {
+	for _, cb := range callbacks {
 		cb(uri, wrapped)
 	}
 }
@@ -116,16 +124,17 @@ func (m *Manager) handleClose(uri protocol.DocumentURI) {
 // handleEdits performs incremental re-parsing after document edits.
 func (m *Manager) handleEdits(uri protocol.DocumentURI, edits []document.EditRange) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	parser, ok := m.parsers[uri]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
 	oldTree, ok := m.trees[uri]
 	if !ok || oldTree.raw == nil {
+		m.mu.Unlock()
 		return
 	}
+	m.mu.Unlock()
 
 	doc := m.store.Get(uri)
 	if doc == nil {
@@ -154,17 +163,19 @@ func (m *Manager) handleEdits(uri protocol.DocumentURI, edits []document.EditRan
 
 	src := []byte(doc.Text())
 	newTree := parser.Parse(src, oldTree.raw)
-
 	diff := computeTreeDiff(oldTree.raw, newTree)
-
 	oldTree.Close()
 	wrapped := &Tree{raw: newTree, src: src, Diff: diff}
+
+	m.mu.Lock()
 	m.trees[uri] = wrapped
+	callbacks := make([]TreeUpdateFunc, len(m.onTreeUpdate))
+	copy(callbacks, m.onTreeUpdate)
+	m.mu.Unlock()
 
 	doc.SetTree(wrapped)
 
-	cb := m.onTreeUpdate
-	if cb != nil {
+	for _, cb := range callbacks {
 		cb(uri, wrapped)
 	}
 }
@@ -251,7 +262,8 @@ func collectAllKinds(root *tree_sitter.Node, kinds map[string]bool) {
 	collectSubtreeKinds(root, kinds)
 }
 
-// Close releases all parsers and trees.
+// Close releases all parsers and trees. Call this during server shutdown to
+// avoid leaking resources. After Close, the Manager must not be used.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

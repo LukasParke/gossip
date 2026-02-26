@@ -18,6 +18,13 @@ type PublishFunc func(ctx context.Context, params *protocol.PublishDiagnosticsPa
 // DiagnosticEngine orchestrates declarative Checks and imperative Analyzers.
 // It maintains per-file, per-check/analyzer diagnostic caches and
 // automatically publishes merged results after every tree update.
+//
+// NewDiagnosticEngine registers the engine as an OnTreeUpdate callback on the
+// Manager, so it runs after every parse or reparse. SetPublish must be called
+// before any documents are opened, or diagnostics will not be sent. The cache
+// stores the last result from each check/analyzer per file; on incremental edits
+// only changed ranges are re-analyzed and results are merged with cached
+// diagnostics from unchanged regions.
 type DiagnosticEngine struct {
 	mu        sync.Mutex
 	checks    []namedCheck
@@ -26,10 +33,11 @@ type DiagnosticEngine struct {
 	// Per-file, per-check/analyzer name cache.
 	cache map[protocol.DocumentURI]map[string][]protocol.Diagnostic
 
-	store    *document.Store
-	manager  *Manager
-	publish  PublishFunc
-	logger   *slog.Logger
+	store            *document.Store
+	manager          *Manager
+	publish          PublishFunc
+	userDataProvider UserDataProvider
+	logger           *slog.Logger
 }
 
 type namedCheck struct {
@@ -56,8 +64,8 @@ func NewDiagnosticEngine(manager *Manager, store *document.Store, logger *slog.L
 }
 
 // SetPublish sets the function used to send diagnostics to the client.
-// This must be called before the engine starts processing tree updates (i.e.,
-// before any documents are opened).
+// Must be called before any documents are opened; if unset, onTreeUpdate
+// returns early and diagnostics are never published.
 func (e *DiagnosticEngine) SetPublish(fn PublishFunc) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -78,6 +86,16 @@ func (e *DiagnosticEngine) RegisterAnalyzer(name string, a Analyzer) {
 	e.analyzers = append(e.analyzers, namedAnalyzer{name: name, analyzer: a})
 }
 
+// SetUserDataProvider registers a function that provides user-defined data for
+// each document. The return value is set as AnalysisContext.UserData before
+// each analyzer runs. This allows consumers to pass custom state (e.g., a
+// semantic model) to analyzers.
+func (e *DiagnosticEngine) SetUserDataProvider(fn UserDataProvider) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.userDataProvider = fn
+}
+
 // ClearCache removes cached diagnostics for a document (on close).
 func (e *DiagnosticEngine) ClearCache(uri protocol.DocumentURI) {
 	e.mu.Lock()
@@ -85,17 +103,54 @@ func (e *DiagnosticEngine) ClearCache(uri protocol.DocumentURI) {
 	delete(e.cache, uri)
 }
 
+// Invalidate clears cached diagnostics for a document and triggers a full
+// re-evaluation of all checks and analyzers. This is useful for cross-file
+// dependency invalidation: when file B changes, call Invalidate on file A
+// if A depends on B.
+func (e *DiagnosticEngine) Invalidate(uri protocol.DocumentURI) {
+	tree := e.manager.GetTree(uri)
+	if tree == nil {
+		return
+	}
+	e.mu.Lock()
+	delete(e.cache, uri)
+	e.mu.Unlock()
+
+	fullDiff := &TreeDiff{IsFullReparse: true, AffectedKinds: make(map[string]bool)}
+	collectAllKinds(tree.RootNode(), fullDiff.AffectedKinds)
+
+	e.onTreeUpdate(uri, &Tree{raw: tree.raw, src: tree.src, Diff: fullDiff})
+}
+
 // onTreeUpdate is called by the Manager after every parse/reparse.
 func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.publish == nil {
+	publishFn := e.publish
+	if publishFn == nil {
+		e.mu.Unlock()
 		return
 	}
 	if len(e.checks) == 0 && len(e.analyzers) == 0 {
+		e.mu.Unlock()
 		return
 	}
+
+	checks := make([]namedCheck, len(e.checks))
+	copy(checks, e.checks)
+	analyzers := make([]namedAnalyzer, len(e.analyzers))
+	copy(analyzers, e.analyzers)
+	udp := e.userDataProvider
+
+	fileCache := e.cache[uri]
+	if fileCache == nil {
+		fileCache = make(map[string][]protocol.Diagnostic)
+		e.cache[uri] = fileCache
+	}
+	cacheCopy := make(map[string][]protocol.Diagnostic, len(fileCache))
+	for k, v := range fileCache {
+		cacheCopy[k] = v
+	}
+	e.mu.Unlock()
 
 	doc := e.store.Get(uri)
 	if doc == nil {
@@ -112,36 +167,39 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 		diff = &TreeDiff{IsFullReparse: true, AffectedKinds: make(map[string]bool)}
 	}
 
-	fileCache := e.cache[uri]
-	if fileCache == nil {
-		fileCache = make(map[string][]protocol.Diagnostic)
-		e.cache[uri] = fileCache
-	}
-
-	e.runChecks(uri, tree, diff, lang, fileCache)
-	e.runAnalyzers(uri, tree, diff, doc, lang, fileCache)
+	e.runChecksUnlocked(tree, diff, lang, checks, cacheCopy)
+	e.runAnalyzersUnlocked(uri, tree, diff, doc, lang, analyzers, udp, cacheCopy)
 
 	var all []protocol.Diagnostic
-	for _, diags := range fileCache {
+	for _, diags := range cacheCopy {
 		all = append(all, diags...)
 	}
 
-	_ = e.publish(context.Background(), &protocol.PublishDiagnosticsParams{
+	e.mu.Lock()
+	e.cache[uri] = cacheCopy
+	e.mu.Unlock()
+
+	version := doc.Version()
+	if err := publishFn(context.Background(), &protocol.PublishDiagnosticsParams{
 		URI:         uri,
+		Version:     &version,
 		Diagnostics: all,
-	})
+	}); err != nil {
+		e.logger.Warn("failed to publish diagnostics", "uri", uri, "error", err)
+	}
 }
 
-func (e *DiagnosticEngine) runChecks(
-	uri protocol.DocumentURI,
+func (e *DiagnosticEngine) runChecksUnlocked(
 	tree *Tree,
 	diff *TreeDiff,
 	lang *tree_sitter.Language,
+	checks []namedCheck,
 	fileCache map[string][]protocol.Diagnostic,
 ) {
-	for _, nc := range e.checks {
+	enc := tree.Encoder()
+	for _, nc := range checks {
 		if diff.IsFullReparse {
-			diags := e.executeCheck(tree, lang, nc)
+			diags := e.executeCheck(tree, lang, nc, enc)
 			fileCache[nc.name] = diags
 			continue
 		}
@@ -150,12 +208,12 @@ func (e *DiagnosticEngine) runChecks(
 			continue
 		}
 
-		freshCaptures := e.executeCheckInRanges(tree, lang, nc, diff.ChangedRanges)
+		freshCaptures := e.executeCheckInRanges(tree, lang, nc, diff.ChangedRanges, enc)
 
 		prev := fileCache[nc.name]
 		var kept []protocol.Diagnostic
 		for _, d := range prev {
-			if !rangesOverlapAny(d.Range, diff.ChangedRanges) {
+			if !d.Range.OverlapsAny(diff.ChangedRanges) {
 				kept = append(kept, d)
 			}
 		}
@@ -163,27 +221,30 @@ func (e *DiagnosticEngine) runChecks(
 	}
 }
 
-func (e *DiagnosticEngine) executeCheck(tree *Tree, lang *tree_sitter.Language, nc namedCheck) []protocol.Diagnostic {
+func (e *DiagnosticEngine) executeCheck(tree *Tree, lang *tree_sitter.Language, nc namedCheck, enc *Encoder) []protocol.Diagnostic {
 	captures, err := tree.QueryCaptures(lang, nc.check.Pattern)
 	if err != nil {
 		e.logger.Warn("check query failed", "check", nc.name, "error", err)
 		return nil
 	}
-	return capturesToDiagnostics(captures, nc)
+	return capturesToDiagnostics(captures, nc, enc)
 }
 
-func (e *DiagnosticEngine) executeCheckInRanges(tree *Tree, lang *tree_sitter.Language, nc namedCheck, ranges []protocol.Range) []protocol.Diagnostic {
+func (e *DiagnosticEngine) executeCheckInRanges(tree *Tree, lang *tree_sitter.Language, nc namedCheck, ranges []protocol.Range, enc *Encoder) []protocol.Diagnostic {
 	captures, err := tree.QueryCapturesInRanges(lang, nc.check.Pattern, ranges)
 	if err != nil {
 		e.logger.Warn("check scoped query failed", "check", nc.name, "error", err)
 		return nil
 	}
-	return capturesToDiagnostics(captures, nc)
+	return capturesToDiagnostics(captures, nc, enc)
 }
 
-func capturesToDiagnostics(captures []Capture, nc namedCheck) []protocol.Diagnostic {
+func capturesToDiagnostics(captures []Capture, nc namedCheck, enc *Encoder) []protocol.Diagnostic {
 	var diags []protocol.Diagnostic
 	for _, c := range captures {
+		if nc.check.DeduplicateNested && hasChildOfSameKind(c.Node) {
+			continue
+		}
 		if nc.check.Filter != nil && !nc.check.Filter(c) {
 			continue
 		}
@@ -195,51 +256,110 @@ func capturesToDiagnostics(captures []Capture, nc namedCheck) []protocol.Diagnos
 		if source == "" {
 			source = nc.name
 		}
-		diags = append(diags, protocol.Diagnostic{
-			Range:    NodeRange(c.Node),
+		d := protocol.Diagnostic{
+			Range:    enc.NodeRange(c.Node),
 			Severity: nc.check.Severity,
 			Source:   source,
 			Message:  msg,
-		})
+		}
+		if nc.check.Code != "" {
+			d.Code = nc.check.Code
+		}
+		if nc.check.CodeDescription != nil {
+			d.CodeDescription = nc.check.CodeDescription
+		}
+		if nc.check.Tags != nil {
+			d.Tags = nc.check.Tags
+		}
+		diags = append(diags, d)
 	}
 	return diags
 }
 
-func (e *DiagnosticEngine) runAnalyzers(
+func (e *DiagnosticEngine) runAnalyzersUnlocked(
 	uri protocol.DocumentURI,
 	tree *Tree,
 	diff *TreeDiff,
 	doc *document.Document,
 	lang *tree_sitter.Language,
+	analyzers []namedAnalyzer,
+	udp UserDataProvider,
 	fileCache map[string][]protocol.Diagnostic,
 ) {
-	for _, na := range e.analyzers {
-		previous := fileCache[na.name]
+	var userData interface{}
+	if udp != nil {
+		userData = udp(uri)
+	}
 
-		if !diff.IsFullReparse && !e.analyzerShouldRun(na.analyzer, diff) {
-			continue
+	type result struct {
+		name  string
+		diags []protocol.Diagnostic
+	}
+
+	var eligible []namedAnalyzer
+	for _, na := range analyzers {
+		if diff.IsFullReparse || analyzerShouldRun(na.analyzer, diff) {
+			eligible = append(eligible, na)
 		}
+	}
 
-		actx := &AnalysisContext{
-			Context:  context.Background(),
-			Tree:     tree,
-			Diff:     diff,
-			Document: doc,
-			Language: lang,
-			Previous: previous,
-		}
+	if len(eligible) == 0 {
+		return
+	}
 
-		result := na.analyzer.Run(actx)
-		fileCache[na.name] = result
+	results := make([]result, len(eligible))
+	var wg sync.WaitGroup
+	wg.Add(len(eligible))
+
+	for i, na := range eligible {
+		i, na := i, na
+		go func() {
+			defer wg.Done()
+
+			actx := &AnalysisContext{
+				Context:  context.Background(),
+				Tree:     tree,
+				Diff:     diff,
+				Document: doc,
+				Language: lang,
+				Previous: fileCache[na.name],
+				UserData: userData,
+			}
+
+			results[i] = result{name: na.name, diags: na.analyzer.Run(actx)}
+		}()
+	}
+
+	wg.Wait()
+
+	for _, r := range results {
+		fileCache[r.name] = r.diags
 	}
 }
 
-func (e *DiagnosticEngine) analyzerShouldRun(a Analyzer, diff *TreeDiff) bool {
+func analyzerShouldRun(a Analyzer, diff *TreeDiff) bool {
 	if len(a.InterestKinds) == 0 {
 		return true
 	}
 	for _, kind := range a.InterestKinds {
 		if diff.AffectsKind(kind) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasChildOfSameKind reports whether node has any child whose Kind() matches
+// the node's own Kind(). Used by DeduplicateNested to skip parent ERROR nodes
+// when a more specific child ERROR exists.
+func hasChildOfSameKind(node *tree_sitter.Node) bool {
+	if node == nil {
+		return false
+	}
+	kind := node.Kind()
+	count := node.ChildCount()
+	for i := uint(0); i < uint(count); i++ {
+		if child := node.Child(i); child != nil && child.Kind() == kind {
 			return true
 		}
 	}

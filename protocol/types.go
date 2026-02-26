@@ -1,4 +1,6 @@
-// Package protocol contains LSP 3.18 types used by the gossip framework.
+// Package protocol contains Language Server Protocol types used by the gossip
+// framework. Types and field meanings follow the LSP 3.18 specification.
+// See: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/
 package protocol
 
 // DocumentURI represents the URI of a document.
@@ -166,9 +168,20 @@ type ServerCapabilities struct {
 	CodeLensProvider           *CodeLensOptions         `json:"codeLensProvider,omitempty"`
 	DocumentLinkProvider       *DocumentLinkOptions     `json:"documentLinkProvider,omitempty"`
 	SelectionRangeProvider     interface{}              `json:"selectionRangeProvider,omitempty"`
-	ExecuteCommandProvider     *ExecuteCommandOptions   `json:"executeCommandProvider,omitempty"`
-	ColorProvider              interface{}              `json:"colorProvider,omitempty"`
-	Workspace                  *ServerWorkspaceCapabilities `json:"workspace,omitempty"`
+	ExecuteCommandProvider       *ExecuteCommandOptions        `json:"executeCommandProvider,omitempty"`
+	LinkedEditingRangeProvider   interface{}                   `json:"linkedEditingRangeProvider,omitempty"`
+	CallHierarchyProvider        interface{}                   `json:"callHierarchyProvider,omitempty"`
+	TypeHierarchyProvider        interface{}                   `json:"typeHierarchyProvider,omitempty"`
+	ColorProvider                interface{}                   `json:"colorProvider,omitempty"`
+	Workspace                    *ServerWorkspaceCapabilities  `json:"workspace,omitempty"`
+}
+
+// DiagnosticOptions configures the textDocument/diagnostic and
+// workspace/diagnostic pull model (LSP 3.18).
+type DiagnosticOptions struct {
+	Identifier            string `json:"identifier,omitempty"`
+	InterFileDependencies bool   `json:"interFileDependencies"`
+	WorkspaceDiagnostics  bool   `json:"workspaceDiagnostics"`
 }
 
 // TextDocumentSyncKind defines how text documents are synced.
@@ -197,6 +210,10 @@ type CompletionOptions struct {
 
 type SignatureHelpOptions struct {
 	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+}
+
+type RenameOptions struct {
+	PrepareProvider bool `json:"prepareProvider,omitempty"`
 }
 
 type CodeLensOptions struct {
@@ -265,13 +282,33 @@ type CompletionList struct {
 }
 
 type CompletionItem struct {
-	Label         string              `json:"label"`
-	Kind          CompletionItemKind  `json:"kind,omitempty"`
-	Detail        string              `json:"detail,omitempty"`
-	Documentation interface{}         `json:"documentation,omitempty"`
-	InsertText    string              `json:"insertText,omitempty"`
-	TextEdit      *TextEdit           `json:"textEdit,omitempty"`
+	Label               string              `json:"label"`
+	Kind                CompletionItemKind  `json:"kind,omitempty"`
+	Tags                []CompletionItemTag `json:"tags,omitempty"`
+	Detail              string              `json:"detail,omitempty"`
+	Documentation       interface{}         `json:"documentation,omitempty"`
+	Preselect           bool                `json:"preselect,omitempty"`
+	SortText            string              `json:"sortText,omitempty"`
+	FilterText          string              `json:"filterText,omitempty"`
+	InsertText          string              `json:"insertText,omitempty"`
+	InsertTextFormat    *InsertTextFormat   `json:"insertTextFormat,omitempty"`
+	TextEdit            *TextEdit           `json:"textEdit,omitempty"`
+	AdditionalTextEdits []TextEdit          `json:"additionalTextEdits,omitempty"`
+	CommitCharacters    []string            `json:"commitCharacters,omitempty"`
+	Command             *Command            `json:"command,omitempty"`
+	Data                interface{}         `json:"data,omitempty"`
 }
+
+type CompletionItemTag int
+
+const CompletionItemTagDeprecated CompletionItemTag = 1
+
+type InsertTextFormat int
+
+const (
+	InsertTextFormatPlainText InsertTextFormat = 1
+	InsertTextFormatSnippet   InsertTextFormat = 2
+)
 
 type CompletionItemKind int
 
@@ -315,15 +352,31 @@ type CodeActionParams struct {
 }
 
 type CodeActionContext struct {
-	Diagnostics []Diagnostic `json:"diagnostics"`
+	Diagnostics []Diagnostic           `json:"diagnostics"`
+	Only        []string               `json:"only,omitempty"`
+	TriggerKind *CodeActionTriggerKind `json:"triggerKind,omitempty"`
 }
 
+type CodeActionTriggerKind int
+
+const (
+	CodeActionTriggerInvoked   CodeActionTriggerKind = 1
+	CodeActionTriggerAutomatic CodeActionTriggerKind = 2
+)
+
 type CodeAction struct {
-	Title       string      `json:"title"`
-	Kind        string      `json:"kind,omitempty"`
-	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
-	Edit        *WorkspaceEdit `json:"edit,omitempty"`
-	Command     *Command    `json:"command,omitempty"`
+	Title       string             `json:"title"`
+	Kind        string             `json:"kind,omitempty"`
+	Diagnostics []Diagnostic       `json:"diagnostics,omitempty"`
+	IsPreferred bool               `json:"isPreferred,omitempty"`
+	Disabled    *CodeActionDisabled `json:"disabled,omitempty"`
+	Edit        *WorkspaceEdit     `json:"edit,omitempty"`
+	Command     *Command           `json:"command,omitempty"`
+	Data        interface{}        `json:"data,omitempty"`
+}
+
+type CodeActionDisabled struct {
+	Reason string `json:"reason"`
 }
 
 type WorkspaceEdit struct {
@@ -347,18 +400,47 @@ const (
 	SeverityHint        DiagnosticSeverity = 4
 )
 
-type Diagnostic struct {
-	Range    Range              `json:"range"`
-	Severity DiagnosticSeverity `json:"severity,omitempty"`
-	Code     interface{}        `json:"code,omitempty"`
-	Source   string             `json:"source,omitempty"`
-	Message  string             `json:"message"`
+// CodeDescription links a diagnostic code to documentation (e.g., rule docs).
+type CodeDescription struct {
+	Href URI `json:"href"`
 }
+
+type Diagnostic struct {
+	Range              Range                          `json:"range"`
+	Severity           DiagnosticSeverity             `json:"severity,omitempty"`
+	Code               interface{}                    `json:"code,omitempty"`
+	CodeDescription    *CodeDescription               `json:"codeDescription,omitempty"`
+	Source             string                         `json:"source,omitempty"`
+	Message            string                         `json:"message"`
+	Tags               []DiagnosticTag                `json:"tags,omitempty"`
+	RelatedInformation []DiagnosticRelatedInformation `json:"relatedInformation,omitempty"`
+	Data               interface{}                    `json:"data,omitempty"`
+}
+
+// DiagnosticRelatedInformation represents a related message and source code
+// location for a diagnostic (e.g., "first defined here" for duplicates).
+type DiagnosticRelatedInformation struct {
+	Location Location `json:"location"`
+	Message  string   `json:"message"`
+}
+
+// DiagnosticTag adds semantic tags to diagnostics (e.g., unnecessary, deprecated).
+type DiagnosticTag int
+
+const (
+	DiagnosticTagUnnecessary DiagnosticTag = 1
+	DiagnosticTagDeprecated  DiagnosticTag = 2
+)
 
 type PublishDiagnosticsParams struct {
 	URI         DocumentURI  `json:"uri"`
 	Diagnostics []Diagnostic `json:"diagnostics"`
 	Version     *int32       `json:"version,omitempty"`
+}
+
+type PrepareRenameResult struct {
+	Range       Range  `json:"range"`
+	Placeholder string `json:"placeholder,omitempty"`
 }
 
 // --- Symbols ---
@@ -512,9 +594,14 @@ type InlayHintParams struct {
 }
 
 type InlayHint struct {
-	Position Position    `json:"position"`
-	Label    interface{} `json:"label"`
-	Kind     *int        `json:"kind,omitempty"`
+	Position     Position    `json:"position"`
+	Label        interface{} `json:"label"`
+	Kind         *int        `json:"kind,omitempty"`
+	Tooltip      interface{} `json:"tooltip,omitempty"`
+	PaddingLeft  bool        `json:"paddingLeft,omitempty"`
+	PaddingRight bool        `json:"paddingRight,omitempty"`
+	TextEdits    []TextEdit  `json:"textEdits,omitempty"`
+	Data         interface{} `json:"data,omitempty"`
 }
 
 // --- Semantic Tokens ---
@@ -523,9 +610,25 @@ type SemanticTokensParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 
+type SemanticTokensRangeParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Range        Range                  `json:"range"`
+}
+
 type SemanticTokens struct {
 	ResultID string   `json:"resultId,omitempty"`
 	Data     []uint32 `json:"data"`
+}
+
+type SemanticTokensLegend struct {
+	TokenTypes     []string `json:"tokenTypes"`
+	TokenModifiers []string `json:"tokenModifiers"`
+}
+
+type SemanticTokensOptions struct {
+	Legend SemanticTokensLegend `json:"legend"`
+	Range bool                 `json:"range,omitempty"`
+	Full  interface{}          `json:"full,omitempty"`
 }
 
 // --- Code Lens ---
@@ -628,6 +731,137 @@ type SelectionRange struct {
 	Range  Range          `json:"range"`
 	Parent *SelectionRange `json:"parent,omitempty"`
 }
+
+// --- Cancel Request ---
+
+type CancelParams struct {
+	ID interface{} `json:"id"`
+}
+
+// --- Pull Diagnostics ---
+
+type DocumentDiagnosticParams struct {
+	TextDocument       TextDocumentIdentifier `json:"textDocument"`
+	Identifier         string                 `json:"identifier,omitempty"`
+	PreviousResultID   string                 `json:"previousResultId,omitempty"`
+}
+
+type DocumentDiagnosticReport struct {
+	Kind        string       `json:"kind"`
+	ResultID    string       `json:"resultId,omitempty"`
+	Items       []Diagnostic `json:"items,omitempty"`
+}
+
+const (
+	DiagnosticReportKindFull      = "full"
+	DiagnosticReportKindUnchanged = "unchanged"
+)
+
+// --- Linked Editing ---
+
+type LinkedEditingRangeParams struct {
+	TextDocumentPositionParams
+}
+
+type LinkedEditingRanges struct {
+	Ranges      []Range `json:"ranges"`
+	WordPattern string  `json:"wordPattern,omitempty"`
+}
+
+// --- Call Hierarchy ---
+
+type CallHierarchyPrepareParams struct {
+	TextDocumentPositionParams
+}
+
+type CallHierarchyItem struct {
+	Name           string      `json:"name"`
+	Kind           SymbolKind  `json:"kind"`
+	Tags           []int       `json:"tags,omitempty"`
+	Detail         string      `json:"detail,omitempty"`
+	URI            DocumentURI `json:"uri"`
+	Range          Range       `json:"range"`
+	SelectionRange Range       `json:"selectionRange"`
+	Data           interface{} `json:"data,omitempty"`
+}
+
+type CallHierarchyIncomingCallsParams struct {
+	Item CallHierarchyItem `json:"item"`
+}
+
+type CallHierarchyIncomingCall struct {
+	From       CallHierarchyItem `json:"from"`
+	FromRanges []Range           `json:"fromRanges"`
+}
+
+type CallHierarchyOutgoingCallsParams struct {
+	Item CallHierarchyItem `json:"item"`
+}
+
+type CallHierarchyOutgoingCall struct {
+	To         CallHierarchyItem `json:"to"`
+	FromRanges []Range           `json:"fromRanges"`
+}
+
+// --- Type Hierarchy ---
+
+type TypeHierarchyPrepareParams struct {
+	TextDocumentPositionParams
+}
+
+type TypeHierarchyItem struct {
+	Name           string      `json:"name"`
+	Kind           SymbolKind  `json:"kind"`
+	Tags           []int       `json:"tags,omitempty"`
+	Detail         string      `json:"detail,omitempty"`
+	URI            DocumentURI `json:"uri"`
+	Range          Range       `json:"range"`
+	SelectionRange Range       `json:"selectionRange"`
+	Data           interface{} `json:"data,omitempty"`
+}
+
+type TypeHierarchySupertypesParams struct {
+	Item TypeHierarchyItem `json:"item"`
+}
+
+type TypeHierarchySubtypesParams struct {
+	Item TypeHierarchyItem `json:"item"`
+}
+
+// --- Work-Done Progress ---
+
+type WorkDoneProgressCreateParams struct {
+	Token interface{} `json:"token"`
+}
+
+type ProgressParams struct {
+	Token interface{} `json:"token"`
+	Value interface{} `json:"value"`
+}
+
+type WorkDoneProgressBegin struct {
+	Kind        string `json:"kind"` // always "begin"
+	Title       string `json:"title"`
+	Cancellable bool   `json:"cancellable,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Percentage  *int   `json:"percentage,omitempty"`
+}
+
+type WorkDoneProgressReport struct {
+	Kind        string `json:"kind"` // always "report"
+	Cancellable bool   `json:"cancellable,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Percentage  *int   `json:"percentage,omitempty"`
+}
+
+type WorkDoneProgressEnd struct {
+	Kind    string `json:"kind"` // always "end"
+	Message string `json:"message,omitempty"`
+}
+
+// --- Completion Resolve ---
+
+type CompletionItemResolveParams = CompletionItem
 
 // --- File Events ---
 

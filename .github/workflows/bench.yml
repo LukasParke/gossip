@@ -19,7 +19,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run benchmarks
-        run: go test ./treesitter/ -bench=. -benchmem -count=5 -timeout=30m | tee bench.txt
+        run: go test ./... -run='^$' -bench=. -benchmem -count=5 -timeout=30m | tee bench.txt
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

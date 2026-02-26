@@ -1,6 +1,7 @@
 package protocol
 
-// LSP method constants.
+// LSP method and notification names. Values match the Language Server Protocol
+// 3.18 specification method strings.
 const (
 	// Lifecycle
 	MethodInitialize  = "initialize"
@@ -42,10 +43,24 @@ const (
 	MethodExecuteCommand               = "workspace/executeCommand"
 
 	// Language features (additional)
-	MethodPrepareRename     = "textDocument/prepareRename"
-	MethodRangeFormatting   = "textDocument/rangeFormatting"
-	MethodDocumentLink      = "textDocument/documentLink"
-	MethodSelectionRange    = "textDocument/selectionRange"
+	MethodPrepareRename           = "textDocument/prepareRename"
+	MethodRangeFormatting         = "textDocument/rangeFormatting"
+	MethodDocumentLink            = "textDocument/documentLink"
+	MethodDocumentLinkResolve     = "documentLink/resolve"
+	MethodSelectionRange          = "textDocument/selectionRange"
+	MethodCompletionResolve       = "completionItem/resolve"
+	MethodSemanticTokensRange     = "textDocument/semanticTokens/range"
+	MethodDocumentDiagnostic      = "textDocument/diagnostic"
+	MethodLinkedEditingRange      = "textDocument/linkedEditingRange"
+	MethodPrepareCallHierarchy    = "textDocument/prepareCallHierarchy"
+	MethodCallHierarchyIncoming   = "callHierarchy/incomingCalls"
+	MethodCallHierarchyOutgoing   = "callHierarchy/outgoingCalls"
+	MethodPrepareTypeHierarchy    = "textDocument/prepareTypeHierarchy"
+	MethodTypeHierarchySupertypes = "typeHierarchy/supertypes"
+	MethodTypeHierarchySubtypes   = "typeHierarchy/subtypes"
+
+	// Special protocol notifications
+	MethodCancelRequest = "$/cancelRequest"
 
 	// Client notifications (server -> client)
 	MethodPublishDiagnostics     = "textDocument/publishDiagnostics"
@@ -63,4 +78,8 @@ const (
 	MethodDiagnosticRefresh     = "workspace/diagnostic/refresh"
 	MethodInlayHintRefresh      = "workspace/inlayHint/refresh"
 	MethodSemanticTokensRefresh = "workspace/semanticTokens/refresh"
+
+	// Work-done progress (server -> client)
+	MethodWorkDoneProgressCreate = "window/workDoneProgress/create"
+	MethodProgress               = "$/progress"
 )
