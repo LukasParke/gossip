@@ -15,6 +15,12 @@ import (
 // the concrete implementation backed by ClientProxy.
 type PublishFunc func(ctx context.Context, params *protocol.PublishDiagnosticsParams) error
 
+// DiagnosticTransformer is a post-processing function applied to the merged
+// diagnostic slice just before publishing. It can filter, modify, or reorder
+// diagnostics. Use SetDiagnosticTransformer to install one. A nil transformer
+// is a no-op.
+type DiagnosticTransformer func(uri protocol.DocumentURI, diags []protocol.Diagnostic) []protocol.Diagnostic
+
 // DiagnosticEngine orchestrates declarative Checks and imperative Analyzers.
 // It maintains per-file, per-check/analyzer diagnostic caches and
 // automatically publishes merged results after every tree update.
@@ -36,6 +42,7 @@ type DiagnosticEngine struct {
 	store            *document.Store
 	manager          *Manager
 	publish          PublishFunc
+	transformer      DiagnosticTransformer
 	userDataProvider UserDataProvider
 	logger           *slog.Logger
 }
@@ -96,6 +103,17 @@ func (e *DiagnosticEngine) SetUserDataProvider(fn UserDataProvider) {
 	e.userDataProvider = fn
 }
 
+// SetDiagnosticTransformer installs a post-processing function that is applied
+// to the merged diagnostic slice just before publishing. The transformer can
+// filter disabled rules, override severities, or reorder diagnostics. It is
+// safe to call at any time; the new transformer takes effect on the next
+// publish cycle. Pass nil to remove a previously installed transformer.
+func (e *DiagnosticEngine) SetDiagnosticTransformer(fn DiagnosticTransformer) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.transformer = fn
+}
+
 // ClearCache removes cached diagnostics for a document (on close).
 func (e *DiagnosticEngine) ClearCache(uri protocol.DocumentURI) {
 	e.mu.Lock()
@@ -122,6 +140,22 @@ func (e *DiagnosticEngine) Invalidate(uri protocol.DocumentURI) {
 	e.onTreeUpdate(uri, &Tree{raw: tree.raw, src: tree.src, Diff: fullDiff})
 }
 
+// InvalidateAll clears cached diagnostics for all documents and triggers a
+// full re-evaluation. Use this when a configuration change (e.g., ruleset
+// reload) affects the output of all rules across all open files.
+func (e *DiagnosticEngine) InvalidateAll() {
+	e.mu.Lock()
+	uris := make([]protocol.DocumentURI, 0, len(e.cache))
+	for uri := range e.cache {
+		uris = append(uris, uri)
+	}
+	e.mu.Unlock()
+
+	for _, uri := range uris {
+		e.Invalidate(uri)
+	}
+}
+
 // onTreeUpdate is called by the Manager after every parse/reparse.
 func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	e.mu.Lock()
@@ -140,6 +174,7 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	analyzers := make([]namedAnalyzer, len(e.analyzers))
 	copy(analyzers, e.analyzers)
 	udp := e.userDataProvider
+	xform := e.transformer
 
 	fileCache := e.cache[uri]
 	if fileCache == nil {
@@ -182,6 +217,10 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	e.mu.Lock()
 	e.cache[uri] = cacheCopy
 	e.mu.Unlock()
+
+	if xform != nil {
+		all = xform(uri, all)
+	}
 
 	version := doc.Version()
 	if err := publishFn(context.Background(), &protocol.PublishDiagnosticsParams{

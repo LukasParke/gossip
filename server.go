@@ -64,6 +64,9 @@ type Server struct {
 	// options
 	opts []Option
 
+	// lifecycle callbacks
+	onInitializedFns []func(*Context)
+
 	// lifecycle state (accessed from multiple goroutines)
 	initialized atomic.Bool
 	shutdown    atomic.Bool
@@ -138,6 +141,15 @@ func (s *Server) OnDidChangeWatchedFiles(h DidChangeWatchedFilesHandler) {
 }
 func (s *Server) OnDidChangeWorkspaceFolders(h DidChangeWorkspaceFoldersHandler) {
 	s.register(protocol.MethodDidChangeWorkspaceFolders, h)
+}
+
+// OnInitialized registers a callback that runs after the client sends the
+// "initialized" notification. Multiple callbacks can be registered; they
+// execute in registration order.
+func (s *Server) OnInitialized(fn func(*Context)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onInitializedFns = append(s.onInitializedFns, fn)
 }
 
 // Check registers a declarative, pattern-based diagnostic rule. When
@@ -218,6 +230,13 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 		return
 	case protocol.MethodInitialized:
 		s.logger.Info("client initialized")
+		s.mu.RLock()
+		fns := make([]func(*Context), len(s.onInitializedFns))
+		copy(fns, s.onInitializedFns)
+		s.mu.RUnlock()
+		for _, fn := range fns {
+			fn(gctx)
+		}
 		return
 	case protocol.MethodExit:
 		s.logger.Info("received exit notification")
