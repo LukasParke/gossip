@@ -116,7 +116,7 @@ func (ctx *AnalysisContext) MergePrevious(fresh []protocol.Diagnostic) []protoco
 		return fresh
 	}
 
-	var merged []protocol.Diagnostic
+	merged := make([]protocol.Diagnostic, 0, len(ctx.Previous)+len(fresh))
 	for _, d := range ctx.Previous {
 		if !d.Range.OverlapsAny(ctx.Diff.ChangedRanges) {
 			merged = append(merged, d)

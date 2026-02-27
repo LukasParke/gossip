@@ -21,11 +21,16 @@ import (
 // and does per-line byte→UTF-16 conversion on demand.
 type Encoder struct {
 	lines [][]byte
+	ascii bool // true when every byte in src is < 0x80
 }
 
 // NewEncoder creates an Encoder for the given source text.
 func NewEncoder(src []byte) *Encoder {
-	return &Encoder{lines: splitLines(src)}
+	n, ascii := countLines(src)
+	if ascii {
+		return &Encoder{ascii: true, lines: splitLinesPrealloc(src, n)}
+	}
+	return &Encoder{lines: splitLinesPrealloc(src, n)}
 }
 
 // Position converts a tree-sitter Point (row + byte column) into an LSP
@@ -39,6 +44,9 @@ func (e *Encoder) Position(p tree_sitter.Point) protocol.Position {
 			return protocol.Position{Line: row, Character: uint32(byteCol)}
 		}
 		lastLine := uint32(len(e.lines) - 1)
+		if e.ascii {
+			return protocol.Position{Line: lastLine, Character: uint32(len(e.lines[lastLine]))}
+		}
 		return protocol.Position{
 			Line:      lastLine,
 			Character: uint32(bytesToUTF16(e.lines[lastLine])),
@@ -48,6 +56,10 @@ func (e *Encoder) Position(p tree_sitter.Point) protocol.Position {
 	line := e.lines[row]
 	if byteCol > len(line) {
 		byteCol = len(line)
+	}
+
+	if e.ascii {
+		return protocol.Position{Line: row, Character: uint32(byteCol)}
 	}
 
 	return protocol.Position{
@@ -92,16 +104,20 @@ func (e *Encoder) PointRange(node *tree_sitter.Node) protocol.Range {
 // tree-sitter Point (row + byte column). This is the inverse of Position.
 func (e *Encoder) Point(pos protocol.Position) tree_sitter.Point {
 	row := int(pos.Line)
-	utf16Col := int(pos.Character)
+	col := int(pos.Character)
 
 	if row >= len(e.lines) {
-		return tree_sitter.Point{Row: uint(pos.Line), Column: uint(utf16Col)}
+		return tree_sitter.Point{Row: uint(pos.Line), Column: uint(col)}
+	}
+
+	if e.ascii {
+		return tree_sitter.Point{Row: uint(pos.Line), Column: uint(col)}
 	}
 
 	line := e.lines[row]
 	return tree_sitter.Point{
 		Row:    uint(pos.Line),
-		Column: uint(utf16ToBytes(line, utf16Col)),
+		Column: uint(utf16ToBytes(line, col)),
 	}
 }
 
@@ -151,14 +167,39 @@ func bytesToUTF16(b []byte) int {
 	return u16
 }
 
+// countLines counts the number of newline-terminated lines in src (including
+// the final line which may not have a trailing newline). Also reports whether
+// every byte is in the ASCII range [0x00, 0x7F].
+func countLines(src []byte) (n int, ascii bool) {
+	n = 1
+	ascii = true
+	for _, b := range src {
+		if b == '\n' {
+			n++
+		}
+		if b >= 0x80 {
+			ascii = false
+		}
+	}
+	return n, ascii
+}
+
 // splitLines splits src into lines, preserving the byte content of each line
 // but stripping the trailing newline. Handles \n, \r\n, and \r.
 func splitLines(src []byte) [][]byte {
 	if len(src) == 0 {
 		return [][]byte{{}}
 	}
+	n, _ := countLines(src)
+	return splitLinesPrealloc(src, n)
+}
 
-	var lines [][]byte
+func splitLinesPrealloc(src []byte, n int) [][]byte {
+	if len(src) == 0 {
+		return [][]byte{{}}
+	}
+
+	lines := make([][]byte, 0, n)
 	start := 0
 	for i := 0; i < len(src); i++ {
 		if src[i] == '\n' {

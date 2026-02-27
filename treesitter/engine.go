@@ -170,7 +170,11 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	e.runChecksUnlocked(tree, diff, lang, checks, cacheCopy)
 	e.runAnalyzersUnlocked(uri, tree, diff, doc, lang, analyzers, udp, cacheCopy)
 
-	var all []protocol.Diagnostic
+	totalDiags := 0
+	for _, diags := range cacheCopy {
+		totalDiags += len(diags)
+	}
+	all := make([]protocol.Diagnostic, 0, totalDiags)
 	for _, diags := range cacheCopy {
 		all = append(all, diags...)
 	}
@@ -211,7 +215,7 @@ func (e *DiagnosticEngine) runChecksUnlocked(
 		freshCaptures := e.executeCheckInRanges(tree, lang, nc, diff.ChangedRanges, enc)
 
 		prev := fileCache[nc.name]
-		var kept []protocol.Diagnostic
+		kept := make([]protocol.Diagnostic, 0, len(prev)+len(freshCaptures))
 		for _, d := range prev {
 			if !d.Range.OverlapsAny(diff.ChangedRanges) {
 				kept = append(kept, d)
@@ -240,7 +244,7 @@ func (e *DiagnosticEngine) executeCheckInRanges(tree *Tree, lang *tree_sitter.La
 }
 
 func capturesToDiagnostics(captures []Capture, nc namedCheck, enc *Encoder) []protocol.Diagnostic {
-	var diags []protocol.Diagnostic
+	diags := make([]protocol.Diagnostic, 0, len(captures))
 	for _, c := range captures {
 		if nc.check.DeduplicateNested && hasChildOfSameKind(c.Node) {
 			continue
@@ -304,6 +308,24 @@ func (e *DiagnosticEngine) runAnalyzersUnlocked(
 	}
 
 	if len(eligible) == 0 {
+		return
+	}
+
+	const parallelThreshold = 4
+
+	if len(eligible) <= parallelThreshold {
+		for _, na := range eligible {
+			actx := &AnalysisContext{
+				Context:  context.Background(),
+				Tree:     tree,
+				Diff:     diff,
+				Document: doc,
+				Language: lang,
+				Previous: fileCache[na.name],
+				UserData: userData,
+			}
+			fileCache[na.name] = na.analyzer.Run(actx)
+		}
 		return
 	}
 
