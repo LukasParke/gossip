@@ -114,6 +114,30 @@ func (e *DiagnosticEngine) SetDiagnosticTransformer(fn DiagnosticTransformer) {
 	e.transformer = fn
 }
 
+// PublishDirect sends diagnostics for any URI directly to the client,
+// bypassing the store gate and the per-check cache. This is used by the
+// project-level diagnostic system to publish diagnostics for files that may
+// not be open in the editor. The transformer is still applied.
+func (e *DiagnosticEngine) PublishDirect(ctx context.Context, uri protocol.DocumentURI, diags []protocol.Diagnostic) error {
+	e.mu.Lock()
+	publishFn := e.publish
+	xform := e.transformer
+	e.mu.Unlock()
+
+	if publishFn == nil {
+		return nil
+	}
+
+	if xform != nil {
+		diags = xform(uri, diags)
+	}
+
+	return publishFn(ctx, &protocol.PublishDiagnosticsParams{
+		URI:         uri,
+		Diagnostics: diags,
+	})
+}
+
 // ClearCache removes cached diagnostics for a document (on close).
 func (e *DiagnosticEngine) ClearCache(uri protocol.DocumentURI) {
 	e.mu.Lock()

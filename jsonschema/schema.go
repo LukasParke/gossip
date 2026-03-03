@@ -52,8 +52,10 @@ type SchemaNode struct {
 	MaxItems *int        `json:"maxItems,omitempty"`
 
 	// Object constraints
-	AdditionalProperties *SchemaNode `json:"-"`
-	PatternProperties    map[string]*SchemaNode `json:"patternProperties,omitempty"`
+	AdditionalProperties        *SchemaNode            `json:"-"`
+	AdditionalPropertiesBanned  bool                   `json:"-"`
+	AdditionalPropertiesAllowed bool                   `json:"-"`
+	PatternProperties           map[string]*SchemaNode `json:"patternProperties,omitempty"`
 
 	// Composition
 	OneOf []*SchemaNode `json:"oneOf,omitempty"`
@@ -193,11 +195,11 @@ func convertRaw(raw *rawSchema, defs map[string]*SchemaNode) *SchemaNode {
 	if len(raw.AdditionalProperties) > 0 {
 		var boolVal bool
 		if err := json.Unmarshal(raw.AdditionalProperties, &boolVal); err == nil {
-			if !boolVal {
-				// additionalProperties: false means no additional properties allowed
-				node.AdditionalProperties = nil
+			if boolVal {
+				node.AdditionalPropertiesAllowed = true
+			} else {
+				node.AdditionalPropertiesBanned = true
 			}
-			// additionalProperties: true means any additional properties allowed (same as omitted)
 		} else {
 			var apRaw rawSchema
 			if err := json.Unmarshal(raw.AdditionalProperties, &apRaw); err == nil {

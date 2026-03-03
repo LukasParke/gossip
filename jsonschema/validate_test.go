@@ -258,3 +258,507 @@ func TestValidateNilInputs(t *testing.T) {
 		t.Error("expected 0 diagnostics for nil schema")
 	}
 }
+
+// --- additionalProperties tests ---
+
+func TestAdditionalProperties_True(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {"name": {"type": "string"}},
+		"additionalProperties": true
+	}`))
+
+	tree := parseTree(t, `{"name": "Alice", "extra": "ok"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "extra") {
+			t.Errorf("additionalProperties:true should allow 'extra', got: %s", d.Message)
+		}
+	}
+}
+
+func TestAdditionalProperties_False(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {"name": {"type": "string"}},
+		"additionalProperties": false
+	}`))
+
+	tree := parseTree(t, `{"name": "Alice", "extra": "bad"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "extra") && strings.Contains(d.Message, "not allowed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected diagnostic for unknown key 'extra' with additionalProperties:false")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestAdditionalProperties_Schema(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {"name": {"type": "string"}},
+		"additionalProperties": {"type": "integer"}
+	}`))
+
+	// Valid: extra value is an integer
+	tree := parseTree(t, `{"name": "Alice", "count": 5}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "count") {
+			t.Errorf("additionalProperties schema allows integer, got: %s", d.Message)
+		}
+	}
+
+	// Invalid: extra value is a string, schema expects integer
+	tree = parseTree(t, `{"name": "Alice", "count": "not-a-number"}`, jsonLang())
+	result = Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "integer") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected type mismatch diagnostic for string value against integer additionalProperties schema")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- const tests ---
+
+func TestConst_Match(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"version": {"type": "string", "const": "1.0"}
+		}
+	}`))
+
+	tree := parseTree(t, `{"version": "1.0"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for matching const, got %d", len(result.Diagnostics))
+	}
+}
+
+func TestConst_Mismatch(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"version": {"type": "string", "const": "1.0"}
+		}
+	}`))
+
+	tree := parseTree(t, `{"version": "2.0"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "must be") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected const mismatch diagnostic")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- exclusiveMinimum / exclusiveMaximum tests ---
+
+func TestExclusiveMinimum(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {"type": "number", "exclusiveMinimum": 0}
+		}
+	}`))
+
+	// Exactly 0 should fail
+	tree := parseTree(t, `{"value": 0}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "> 0") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected exclusiveMinimum violation for value=0")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+
+	// 1 should pass
+	tree = parseTree(t, `{"value": 1}`, jsonLang())
+	result = Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for value=1, got %d", len(result.Diagnostics))
+	}
+}
+
+func TestExclusiveMaximum(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {"type": "number", "exclusiveMaximum": 100}
+		}
+	}`))
+
+	// Exactly 100 should fail
+	tree := parseTree(t, `{"value": 100}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "< 100") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected exclusiveMaximum violation for value=100")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+
+	// 99 should pass
+	tree = parseTree(t, `{"value": 99}`, jsonLang())
+	result = Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for value=99, got %d", len(result.Diagnostics))
+	}
+}
+
+// --- multipleOf tests ---
+
+func TestMultipleOf_Valid(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {"type": "integer", "multipleOf": 5}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": 15}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for 15 (multiple of 5), got %d", len(result.Diagnostics))
+	}
+}
+
+func TestMultipleOf_Invalid(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {"type": "integer", "multipleOf": 5}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": 7}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "multiple of 5") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected multipleOf violation for 7")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- if/then/else tests ---
+
+func TestIfThenElse_ThenBranch(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"kind": {"type": "string"},
+			"value": {}
+		},
+		"if": {
+			"properties": {"kind": {"const": "number"}}
+		},
+		"then": {
+			"properties": {"value": {"type": "integer"}}
+		},
+		"else": {
+			"properties": {"value": {"type": "string"}}
+		}
+	}`))
+
+	// kind=number → if matches → then branch → value should be integer, but "hello" is string
+	tree := parseTree(t, `{"kind": "number", "value": "hello"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "integer") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected type mismatch from 'then' branch")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestIfThenElse_ElseBranch(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"kind": {"type": "string"},
+			"value": {}
+		},
+		"if": {
+			"properties": {"kind": {"const": "number"}}
+		},
+		"then": {
+			"properties": {"value": {"type": "integer"}}
+		},
+		"else": {
+			"properties": {"value": {"type": "string"}}
+		}
+	}`))
+
+	// kind=text → if does NOT match (const mismatch) → else branch → value should be string, 42 is not
+	tree := parseTree(t, `{"kind": "text", "value": 42}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "string") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected type mismatch from 'else' branch")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- not tests ---
+
+func TestNot_Violation(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"status": {
+				"type": "string",
+				"not": {"const": "deprecated"}
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"status": "deprecated"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "must not match") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'not' schema violation diagnostic")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestNot_Valid(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"status": {
+				"type": "string",
+				"not": {"const": "deprecated"}
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"status": "active"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics, got %d", len(result.Diagnostics))
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- anyOf / oneOf failure tests ---
+
+func TestAnyOf_NoMatch_Suppressed(t *testing.T) {
+	// anyOf failures are intentionally suppressed to avoid noise in complex
+	// schemas (e.g., OpenAPI). This test verifies the behavior is silent.
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"anyOf": [
+					{"type": "string"},
+					{"type": "integer"}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": true}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "anyOf") {
+			t.Errorf("anyOf failures should be suppressed, got: %s", d.Message)
+		}
+	}
+}
+
+func TestAnyOf_Match(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"anyOf": [
+					{"type": "string"},
+					{"type": "integer"}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": "hello"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for anyOf match, got %d", len(result.Diagnostics))
+	}
+}
+
+func TestOneOf_NoMatch(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"oneOf": [
+					{"type": "string", "minLength": 5},
+					{"type": "integer"}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": true}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "oneOf") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected oneOf failure diagnostic")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+// --- YAML-specific tests for new features ---
+
+func TestYAML_AdditionalProperties_False(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {"name": {"type": "string"}},
+		"additionalProperties": false
+	}`))
+
+	tree := parseTree(t, "name: Alice\nextra: bad", yamlLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "extra") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected diagnostic for 'extra' in YAML with additionalProperties:false")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestYAML_ExclusiveMinimum(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"count": {"type": "number", "exclusiveMinimum": 0}
+		}
+	}`))
+
+	tree := parseTree(t, "count: 0", yamlLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "> 0") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected exclusiveMinimum violation in YAML")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestRequiredPropertyRange_TargetsKey(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"info": {
+				"type": "object",
+				"properties": {
+					"title": {"type": "string"},
+					"version": {"type": "string"}
+				},
+				"required": ["title", "version"]
+			}
+		},
+		"required": ["info"]
+	}`))
+
+	yamlSrc := "info:\n  title: My API"
+	tree := parseTree(t, yamlSrc, yamlLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "Required property 'version' is missing") {
+			// The range should NOT span the whole object; it should be narrowed
+			// to the key "info" or the first child
+			lines := d.Range.End.Line - d.Range.Start.Line
+			if lines > 1 {
+				t.Errorf("expected required-property diagnostic to be narrow (<=1 line), spans %d lines", lines+1)
+			}
+			return
+		}
+	}
+	t.Error("expected diagnostic about missing 'version'")
+}

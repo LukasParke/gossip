@@ -93,6 +93,12 @@ func (v *validator) validate(node *tree_sitter.Node, schema *SchemaNode) {
 	if len(schema.OneOf) > 0 {
 		v.validateOneOf(node, schema.OneOf)
 	}
+	if schema.Not != nil {
+		v.validateNot(node, schema.Not)
+	}
+	if schema.If != nil {
+		v.validateConditional(node, schema)
+	}
 
 	kind := node.Kind()
 
@@ -133,7 +139,28 @@ func (v *validator) validateObject(node *tree_sitter.Node, schema *SchemaNode) {
 			continue
 		}
 
-		// Unknown key
+		// additionalProperties as a sub-schema: validate value against it
+		if schema.AdditionalProperties != nil {
+			if pair.ValueNode != nil {
+				valueNode := unwrapValue(pair.ValueNode)
+				if valueNode != nil {
+					v.validate(valueNode, schema.AdditionalProperties)
+				}
+			}
+			continue
+		}
+
+		// additionalProperties: true → allow
+		if schema.AdditionalPropertiesAllowed {
+			continue
+		}
+
+		// additionalProperties not specified and no properties defined → allow
+		if !schema.AdditionalPropertiesBanned && len(schema.Properties) == 0 {
+			continue
+		}
+
+		// Unknown key — report diagnostic
 		validKeys := propertyNames(schema)
 		suggestion := SuggestKey(pair.KeyText, validKeys)
 
@@ -149,10 +176,13 @@ func (v *validator) validateObject(node *tree_sitter.Node, schema *SchemaNode) {
 		v.addDiag(pair.KeyNode, msg, data)
 	}
 
-	// Check required fields
-	for _, req := range schema.Required {
-		if !presentKeys[req] {
-			v.addDiag(node, fmt.Sprintf("Required property '%s' is missing", req), nil)
+	// Check required fields — target the parent key or object opening rather than the whole object
+	if len(schema.Required) > 0 {
+		target := objectDiagTarget(node)
+		for _, req := range schema.Required {
+			if !presentKeys[req] {
+				v.addDiag(target, fmt.Sprintf("Required property '%s' is missing", req), nil)
+			}
 		}
 	}
 }
@@ -209,6 +239,15 @@ func (v *validator) validateScalar(node *tree_sitter.Node, schema *SchemaNode) {
 		}
 	}
 
+	// Const checking
+	if schema.Const != nil {
+		constStr := fmt.Sprintf("%v", schema.Const)
+		scalarVal := unquoteScalar(text)
+		if scalarVal != constStr {
+			v.addDiag(node, fmt.Sprintf("Value must be %s", constStr), nil)
+		}
+	}
+
 	// Enum checking
 	if len(schema.Enum) > 0 {
 		scalarVal := unquoteScalar(text)
@@ -253,6 +292,18 @@ func (v *validator) validateScalar(node *tree_sitter.Node, schema *SchemaNode) {
 			if schema.Maximum != nil && f > *schema.Maximum {
 				v.addDiag(node, fmt.Sprintf("Value must be <= %g", *schema.Maximum), nil)
 			}
+			if schema.ExclusiveMinimum != nil && f <= *schema.ExclusiveMinimum {
+				v.addDiag(node, fmt.Sprintf("Value must be > %g", *schema.ExclusiveMinimum), nil)
+			}
+			if schema.ExclusiveMaximum != nil && f >= *schema.ExclusiveMaximum {
+				v.addDiag(node, fmt.Sprintf("Value must be < %g", *schema.ExclusiveMaximum), nil)
+			}
+			if schema.MultipleOf != nil && *schema.MultipleOf != 0 {
+				remainder := f / *schema.MultipleOf
+				if remainder != float64(int64(remainder)) {
+					v.addDiag(node, fmt.Sprintf("Value must be a multiple of %g", *schema.MultipleOf), nil)
+				}
+			}
 		}
 	}
 }
@@ -269,8 +320,8 @@ func (v *validator) validateAnyOf(node *tree_sitter.Node, schemas []*SchemaNode)
 			return // at least one matches
 		}
 	}
-	// None matched -- don't report individual sub-schema failures
-	// as that's too noisy; the parent context is more useful
+	// Suppressed: reporting anyOf failures on complex schemas (especially OpenAPI)
+	// produces excessive noise. The parent context is more useful.
 }
 
 func (v *validator) validateOneOf(node *tree_sitter.Node, schemas []*SchemaNode) {
@@ -287,10 +338,70 @@ func (v *validator) validateOneOf(node *tree_sitter.Node, schemas []*SchemaNode)
 		}
 	}
 	if matchCount == 0 {
-		// None matched -- same as anyOf, don't report sub-schema failures
+		v.addDiag(node, "Value must match exactly one schema (oneOf), but matched none", nil)
 	}
-	// If more than one matched, that's technically a oneOf violation,
-	// but for structural validation purposes we allow it
+}
+
+func (v *validator) validateNot(node *tree_sitter.Node, notSchema *SchemaNode) {
+	trial := &validator{
+		tree:   v.tree,
+		opts:   v.opts,
+		schema: v.schema,
+	}
+	trial.validate(node, notSchema)
+	if len(trial.diags) == 0 {
+		v.addDiag(node, "Value must not match the excluded schema", nil)
+	}
+}
+
+func (v *validator) validateConditional(node *tree_sitter.Node, schema *SchemaNode) {
+	trial := &validator{
+		tree:   v.tree,
+		opts:   v.opts,
+		schema: v.schema,
+	}
+	trial.validate(node, schema.If)
+
+	// Only count constraint/type errors as failures, not unknown-key diagnostics,
+	// because the if-schema typically defines a subset of properties.
+	realFailures := 0
+	for _, d := range trial.diags {
+		if _, ok := d.Data.(InvalidKeyData); !ok {
+			realFailures++
+		}
+	}
+
+	if realFailures == 0 {
+		if schema.Then != nil {
+			v.validate(node, schema.Then)
+		}
+	} else {
+		if schema.Else != nil {
+			v.validate(node, schema.Else)
+		}
+	}
+}
+
+// objectDiagTarget returns the best node for diagnosing a missing-property
+// error. If the object is the value of a key-value pair, use the key node
+// (e.g., "info" for `info: { ... }`). Otherwise fall back to the first named
+// child of the object, or the object itself.
+func objectDiagTarget(objectNode *tree_sitter.Node) *tree_sitter.Node {
+	parent := objectNode.Parent()
+	if parent != nil {
+		kind := parent.Kind()
+		// YAML: block_mapping_pair / flow_pair; JSON: pair
+		if kind == "block_mapping_pair" || kind == "flow_pair" || kind == "pair" {
+			key := parent.ChildByFieldName("key")
+			if key != nil {
+				return key
+			}
+		}
+	}
+	if objectNode.NamedChildCount() > 0 {
+		return objectNode.NamedChild(0)
+	}
+	return objectNode
 }
 
 // --- helpers ---
