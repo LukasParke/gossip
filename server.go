@@ -67,6 +67,10 @@ type Server struct {
 	// lifecycle callbacks
 	onInitializedFns []func(*Context)
 
+	// CLI collection hooks (set by SetAnalyzeHook / SetCheckHook)
+	analyzeHook AnalyzeHook
+	checkHook   CheckHook
+
 	// lifecycle state (accessed from multiple goroutines)
 	initialized atomic.Bool
 	shutdown    atomic.Bool
@@ -156,8 +160,11 @@ func (s *Server) OnInitialized(fn func(*Context)) {
 // tree-sitter is enabled, the pattern is run incrementally on each edit (scoped
 // to only the changed ranges) and matching diagnostics are automatically cached,
 // merged, and published. If tree-sitter is not enabled, the check is silently
-// ignored.
+// ignored. If a CheckHook is set, it is called regardless.
 func (s *Server) Check(name string, c treesitter.Check) {
+	if s.checkHook != nil {
+		s.checkHook(name, c)
+	}
 	if s.diagEngine != nil {
 		s.diagEngine.RegisterCheck(name, c)
 	}
@@ -165,11 +172,31 @@ func (s *Server) Check(name string, c treesitter.Check) {
 
 // Analyze registers an imperative diagnostic analyzer. See treesitter.Analyzer
 // for the full API. Like Check, this is a no-op when tree-sitter is not enabled.
+// If an AnalyzeHook is set, it is called regardless of whether tree-sitter is
+// enabled, allowing CLI tooling to capture analyzers without a DiagnosticEngine.
 func (s *Server) Analyze(name string, a treesitter.Analyzer) {
+	if s.analyzeHook != nil {
+		s.analyzeHook(name, a)
+	}
 	if s.diagEngine != nil {
 		s.diagEngine.RegisterAnalyzer(name, a)
 	}
 }
+
+// AnalyzeHook is a callback invoked on every Server.Analyze() call, even when
+// tree-sitter is not enabled. This lets CLI tooling capture all registered
+// analyzers without requiring a DiagnosticEngine.
+type AnalyzeHook func(name string, a treesitter.Analyzer)
+
+// SetAnalyzeHook installs a hook that is called for every Analyze() call.
+func (s *Server) SetAnalyzeHook(fn AnalyzeHook) { s.analyzeHook = fn }
+
+// CheckHook is a callback invoked on every Server.Check() call, even when
+// tree-sitter is not enabled.
+type CheckHook func(name string, c treesitter.Check)
+
+// SetCheckHook installs a hook that is called for every Check() call.
+func (s *Server) SetCheckHook(fn CheckHook) { s.checkHook = fn }
 
 // --- Accessor methods ("break glass" escape hatches) ---
 
@@ -184,6 +211,10 @@ func (s *Server) Documents() *document.Store { return s.docStore }
 
 // Logger returns the server's logger.
 func (s *Server) Logger() *slog.Logger { return s.logger }
+
+// Client returns the ClientProxy for sending notifications to the LSP client.
+// Returns nil until Serve has been called and the connection is established.
+func (s *Server) Client() *ClientProxy { return s.client }
 
 // Conn returns the JSON-RPC connection used for client communication. Returns
 // nil until Serve has been called and the connection is established.

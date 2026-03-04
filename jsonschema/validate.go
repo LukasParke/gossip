@@ -15,6 +15,7 @@ import (
 // ValidateOptions configures the validation behavior.
 type ValidateOptions struct {
 	Source         string                      // diagnostic source (e.g. "openapi-structure")
+	Code           string                      // diagnostic code (e.g. "oas3-schema"); if empty, Source is used
 	Severity       protocol.DiagnosticSeverity // default severity
 	MaxDiagnostics int                         // cap (0 = unlimited)
 }
@@ -72,6 +73,11 @@ func (v *validator) addDiag(node *tree_sitter.Node, msg string, data any) {
 		Source:   v.opts.Source,
 		Message:  msg,
 		Data:     data,
+	}
+	if v.opts.Code != "" {
+		d.Code = v.opts.Code
+	} else if v.opts.Source != "" {
+		d.Code = v.opts.Source
 	}
 	v.diags = append(v.diags, d)
 }

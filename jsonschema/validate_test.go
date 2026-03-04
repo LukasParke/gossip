@@ -729,6 +729,158 @@ func TestYAML_ExclusiveMinimum(t *testing.T) {
 	}
 }
 
+// --- Edge case tests ---
+
+func TestValidate_NilSchemaNode(t *testing.T) {
+	tree := parseTree(t, `{"name": "test"}`, jsonLang())
+
+	// Validate with a compiled schema whose Root is nil
+	result := Validate(tree, &CompiledSchema{Root: nil}, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for nil Root, got %d", len(result.Diagnostics))
+	}
+
+	// Also verify nil tree + nil schema
+	result = Validate(nil, nil, defaultOpts())
+	if len(result.Diagnostics) != 0 {
+		t.Errorf("expected 0 diagnostics for double nil, got %d", len(result.Diagnostics))
+	}
+}
+
+func TestValidate_EmptyObjectAgainstRequired(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string"},
+			"age": {"type": "integer"},
+			"email": {"type": "string"}
+		},
+		"required": ["name", "age", "email"]
+	}`))
+
+	tree := parseTree(t, `{}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	if len(result.Diagnostics) != 3 {
+		t.Errorf("expected 3 diagnostics for 3 missing required props, got %d:", len(result.Diagnostics))
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+	for _, req := range []string{"name", "age", "email"} {
+		found := false
+		for _, d := range result.Diagnostics {
+			if strings.Contains(d.Message, req) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected diagnostic about missing '%s'", req)
+		}
+	}
+}
+
+func TestValidate_PatternPropertyMismatch(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"patternProperties": {
+			"^x-": {"type": "string"}
+		},
+		"additionalProperties": false
+	}`))
+
+	// "x-custom" matches pattern → allowed, "regular" does not match → error
+	tree := parseTree(t, `{"x-custom": "ok", "regular": "bad"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "regular") && strings.Contains(d.Message, "not allowed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected diagnostic for 'regular' key not matching any pattern property")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+
+	// "x-custom" should NOT produce a diagnostic
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "x-custom") {
+			t.Errorf("x-custom should be allowed by patternProperties, got: %s", d.Message)
+		}
+	}
+}
+
+func TestValidate_IfThenElseEdge(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"format": {"type": "string"},
+			"data": {}
+		},
+		"if": {
+			"properties": {"format": {"const": "json"}}
+		},
+		"then": {
+			"properties": {"data": {"type": "object"}}
+		},
+		"else": {
+			"properties": {"data": {"type": "string"}}
+		}
+	}`))
+
+	// format=json → matches if → then branch → data should be object
+	// But data is a string → error from then branch
+	tree := parseTree(t, `{"format": "json", "data": "not-an-object"}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "object") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected type mismatch from 'then' branch (data should be object)")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestValidate_OneOfAmbiguity(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"oneOf": [
+					{"type": "string"},
+					{"type": "boolean"}
+				]
+			}
+		}
+	}`))
+
+	// 42 is a number — matches neither string nor boolean branch
+	tree := parseTree(t, `{"value": 42}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "oneOf") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected oneOf failure when numeric value matches neither string nor boolean")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
 func TestRequiredPropertyRange_TargetsKey(t *testing.T) {
 	schema := MustLoad([]byte(`{
 		"type": "object",
