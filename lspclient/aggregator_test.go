@@ -113,6 +113,7 @@ func TestAggregator_Clear(t *testing.T) {
 }
 
 func TestAggregator_SetPublishFunc(t *testing.T) {
+	var mu sync.Mutex
 	var publishedMsg string
 
 	agg := NewDiagnosticAggregator(nil, 10*time.Millisecond)
@@ -123,6 +124,8 @@ func TestAggregator_SetPublishFunc(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	agg.SetPublishFunc(func(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
+		mu.Lock()
+		defer mu.Unlock()
 		if len(params.Diagnostics) > 0 {
 			publishedMsg = params.Diagnostics[0].Message
 		}
@@ -132,6 +135,8 @@ func TestAggregator_SetPublishFunc(t *testing.T) {
 	agg.Set(uri, "telescope", []protocol.Diagnostic{{Message: "after"}})
 	time.Sleep(50 * time.Millisecond)
 
+	mu.Lock()
+	defer mu.Unlock()
 	if publishedMsg != "after" {
 		t.Errorf("expected 'after', got %q", publishedMsg)
 	}
