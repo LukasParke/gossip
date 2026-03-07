@@ -34,6 +34,11 @@ func PointRange(pos Position) Range {
 	return Range{Start: pos, End: pos}
 }
 
+// FileStartRange is a 1-character range at position {0,0}→{0,1}, suitable for
+// document-level diagnostics that should appear at the start of the file
+// without highlighting a specific token.
+var FileStartRange = NewRange(0, 0, 0, 1)
+
 // IsZero reports whether the range is the zero value (both positions at 0:0).
 func (r Range) IsZero() bool {
 	return r.Start.Line == 0 && r.Start.Character == 0 &&

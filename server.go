@@ -74,6 +74,11 @@ type Server struct {
 	// lifecycle state (accessed from multiple goroutines)
 	initialized atomic.Bool
 	shutdown    atomic.Bool
+
+	// docSyncMu serializes document lifecycle notifications (didOpen,
+	// didChange, didClose) so that a reclassification cycle (close+open)
+	// cannot race with concurrent requests seeing a partially-removed doc.
+	docSyncMu sync.Mutex
 }
 
 // NewServer creates a new gossip LSP server with the given name and version.
@@ -397,6 +402,14 @@ func (s *Server) dispatchToHandler(ctx *Context, method string, params jsonrpc.R
 }
 
 func (s *Server) dispatchNotificationToHandler(ctx *Context, method string, params jsonrpc.RawMessage) {
+	// Serialize document lifecycle notifications so that a didClose+didOpen
+	// reclassification cycle cannot interleave with concurrent requests.
+	switch method {
+	case protocol.MethodDidOpen, protocol.MethodDidChange, protocol.MethodDidClose:
+		s.docSyncMu.Lock()
+		defer s.docSyncMu.Unlock()
+	}
+
 	switch method {
 	case protocol.MethodDidOpen:
 		var p protocol.DidOpenTextDocumentParams
@@ -419,7 +432,7 @@ func (s *Server) dispatchNotificationToHandler(ctx *Context, method string, para
 		} else {
 			s.docStore.Close(&p)
 			if s.diagEngine != nil {
-				s.diagEngine.ClearCache(p.TextDocument.URI)
+				s.diagEngine.ClearCache(protocol.NormalizeURI(p.TextDocument.URI))
 			}
 		}
 	case protocol.MethodDidChangeWorkspaceFolders:

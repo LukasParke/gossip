@@ -44,10 +44,13 @@ func (s *Store) OnClose(fn func(uri protocol.DocumentURI)) {
 }
 
 // Get returns the document for the given URI, or nil if not found.
+// The URI is normalized before lookup so that different encodings of the
+// same file path resolve to the same document.
 func (s *Store) Get(uri protocol.DocumentURI) *Document {
+	key := protocol.NormalizeURI(uri)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.docs[uri]
+	return s.docs[key]
 }
 
 // URIs returns all open document URIs.
@@ -62,7 +65,9 @@ func (s *Store) URIs() []protocol.DocumentURI {
 }
 
 // Open adds a document to the store from a didOpen notification.
+// The URI is normalized before storage.
 func (s *Store) Open(params *protocol.DidOpenTextDocumentParams) {
+	params.TextDocument.URI = protocol.NormalizeURI(params.TextDocument.URI)
 	doc := New(params.TextDocument)
 
 	s.mu.Lock()
@@ -78,8 +83,9 @@ func (s *Store) Open(params *protocol.DidOpenTextDocumentParams) {
 
 // Change applies edits from a didChange notification.
 func (s *Store) Change(params *protocol.DidChangeTextDocumentParams) {
+	key := protocol.NormalizeURI(params.TextDocument.URI)
 	s.mu.RLock()
-	doc := s.docs[params.TextDocument.URI]
+	doc := s.docs[key]
 	s.mu.RUnlock()
 
 	if doc != nil {
@@ -89,13 +95,14 @@ func (s *Store) Change(params *protocol.DidChangeTextDocumentParams) {
 
 // Close removes a document from the store.
 func (s *Store) Close(params *protocol.DidCloseTextDocumentParams) {
+	key := protocol.NormalizeURI(params.TextDocument.URI)
 	s.mu.Lock()
-	delete(s.docs, params.TextDocument.URI)
+	delete(s.docs, key)
 	callbacks := make([]func(uri protocol.DocumentURI), len(s.onCloseCallbacks))
 	copy(callbacks, s.onCloseCallbacks)
 	s.mu.Unlock()
 
 	for _, cb := range callbacks {
-		cb(params.TextDocument.URI)
+		cb(key)
 	}
 }

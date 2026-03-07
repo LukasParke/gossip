@@ -132,6 +132,10 @@ func (e *DiagnosticEngine) PublishDirect(ctx context.Context, uri protocol.Docum
 		diags = xform(uri, diags)
 	}
 
+	if diags == nil {
+		diags = []protocol.Diagnostic{}
+	}
+
 	return publishFn(ctx, &protocol.PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diags,
@@ -245,6 +249,9 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 	if xform != nil {
 		all = xform(uri, all)
 	}
+	if all == nil {
+		all = []protocol.Diagnostic{}
+	}
 
 	version := doc.Version()
 	if err := publishFn(context.Background(), &protocol.PublishDiagnosticsParams{
@@ -323,8 +330,14 @@ func capturesToDiagnostics(captures []Capture, nc namedCheck, enc *Encoder) []pr
 		if source == "" {
 			source = nc.name
 		}
+		rng := enc.NodeRange(c.Node)
+		// Constrain multi-line ranges to a single line so diagnostics don't
+		// highlight leading whitespace on subsequent lines.
+		if rng.End.Line > rng.Start.Line {
+			rng.End = protocol.Position{Line: rng.Start.Line, Character: rng.Start.Character + 1000}
+		}
 		d := protocol.Diagnostic{
-			Range:    enc.NodeRange(c.Node),
+			Range:    rng,
 			Severity: nc.check.Severity,
 			Source:   source,
 			Message:  msg,

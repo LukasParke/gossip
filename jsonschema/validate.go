@@ -67,8 +67,15 @@ func (v *validator) addDiag(node *tree_sitter.Node, msg string, data any) {
 		return
 	}
 
+	rng := v.tree.NodeRange(node)
+	// Constrain multi-line ranges to a single line so diagnostics don't
+	// highlight leading whitespace on subsequent lines.
+	if rng.End.Line > rng.Start.Line {
+		rng.End = protocol.Position{Line: rng.Start.Line, Character: rng.Start.Character + 1000}
+	}
+
 	d := protocol.Diagnostic{
-		Range:    v.tree.NodeRange(node),
+		Range:    rng,
 		Severity: v.opts.Severity,
 		Source:   v.opts.Source,
 		Message:  msg,
@@ -140,8 +147,14 @@ func (v *validator) validateObject(node *tree_sitter.Node, schema *SchemaNode) {
 			continue
 		}
 
-		// Check pattern properties
-		if matchesPatternProperty(pair.KeyText, schema.PatternProperties) {
+		// Check pattern properties — validate value against the matching schema
+		if ppSchema := matchingPatternProperty(pair.KeyText, schema.PatternProperties); ppSchema != nil {
+			if pair.ValueNode != nil {
+				valueNode := unwrapValue(pair.ValueNode)
+				if valueNode != nil {
+					v.validate(valueNode, ppSchema)
+				}
+			}
 			continue
 		}
 
@@ -315,6 +328,7 @@ func (v *validator) validateScalar(node *tree_sitter.Node, schema *SchemaNode) {
 }
 
 func (v *validator) validateAnyOf(node *tree_sitter.Node, schemas []*SchemaNode) {
+	var bestDiags []protocol.Diagnostic
 	for _, sub := range schemas {
 		trial := &validator{
 			tree:   v.tree,
@@ -325,9 +339,14 @@ func (v *validator) validateAnyOf(node *tree_sitter.Node, schemas []*SchemaNode)
 		if len(trial.diags) == 0 {
 			return // at least one matches
 		}
+		// Track the alternative with the fewest errors (closest match).
+		if bestDiags == nil || len(trial.diags) < len(bestDiags) {
+			bestDiags = trial.diags
+		}
 	}
-	// Suppressed: reporting anyOf failures on complex schemas (especially OpenAPI)
-	// produces excessive noise. The parent context is more useful.
+	// Report the diagnostics from the closest-matching alternative so the
+	// user gets specific, actionable feedback rather than a generic message.
+	v.diags = append(v.diags, bestDiags...)
 }
 
 func (v *validator) validateOneOf(node *tree_sitter.Node, schemas []*SchemaNode) {
@@ -515,13 +534,15 @@ func propertyNames(schema *SchemaNode) []string {
 	return names
 }
 
-func matchesPatternProperty(key string, patterns map[string]*SchemaNode) bool {
-	for pattern := range patterns {
+// matchingPatternProperty returns the schema for the first pattern property
+// whose regex matches the given key, or nil if no pattern matches.
+func matchingPatternProperty(key string, patterns map[string]*SchemaNode) *SchemaNode {
+	for pattern, schema := range patterns {
 		if re, err := regexp.Compile(pattern); err == nil {
 			if re.MatchString(key) {
-				return true
+				return schema
 			}
 		}
 	}
-	return false
+	return nil
 }

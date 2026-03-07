@@ -607,9 +607,9 @@ func TestNot_Valid(t *testing.T) {
 
 // --- anyOf / oneOf failure tests ---
 
-func TestAnyOf_NoMatch_Suppressed(t *testing.T) {
-	// anyOf failures are intentionally suppressed to avoid noise in complex
-	// schemas (e.g., OpenAPI). This test verifies the behavior is silent.
+func TestAnyOf_NoMatch_ReportsClosest(t *testing.T) {
+	// When no anyOf alternative matches, the diagnostics from the closest
+	// match (fewest errors) are reported so the user gets specific feedback.
 	schema := MustLoad([]byte(`{
 		"type": "object",
 		"properties": {
@@ -624,10 +624,17 @@ func TestAnyOf_NoMatch_Suppressed(t *testing.T) {
 
 	tree := parseTree(t, `{"value": true}`, jsonLang())
 	result := Validate(tree, schema, defaultOpts())
+	if len(result.Diagnostics) == 0 {
+		t.Error("expected diagnostics from closest anyOf match, got none")
+	}
+	found := false
 	for _, d := range result.Diagnostics {
-		if strings.Contains(d.Message, "anyOf") {
-			t.Errorf("anyOf failures should be suppressed, got: %s", d.Message)
+		if strings.Contains(d.Message, "Expected") {
+			found = true
 		}
+	}
+	if !found {
+		t.Error("expected type mismatch diagnostic from closest anyOf match")
 	}
 }
 

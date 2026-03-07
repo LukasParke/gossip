@@ -113,13 +113,19 @@ func Load(data []byte) (*CompiledSchema, error) {
 		defs[name] = convertRaw(def, nil)
 	}
 
-	// Second pass: resolve $ref pointers in defs
-	for _, node := range defs {
-		resolveRefs(node, defs)
+	// Second pass: resolve $ref pointers in defs using DFS. Each def is
+	// resolved at most once, and dependencies are resolved before the
+	// referencing node copies their content. Circular references are
+	// handled by marking defs "in progress" and using the current
+	// (partially resolved) state — the shallow copy shares pointers,
+	// so later resolution of the cycle target is visible.
+	state := make(map[string]resolveState, len(defs))
+	for name := range defs {
+		resolveDef(name, defs, state)
 	}
 
 	root := convertRaw(&raw, nil)
-	resolveRefs(root, defs)
+	resolveRefs(root, defs, state)
 
 	return &CompiledSchema{Root: root, Defs: defs}, nil
 }
@@ -227,39 +233,64 @@ func convertRaw(raw *rawSchema, defs map[string]*SchemaNode) *SchemaNode {
 	return node
 }
 
-func resolveRefs(node *SchemaNode, defs map[string]*SchemaNode) {
+type resolveState int
+
+const (
+	unresolved resolveState = iota
+	inProgress
+	resolved
+)
+
+// resolveDef ensures the named def is fully resolved. It resolves
+// dependencies first (DFS), handling cycles by allowing partial state.
+func resolveDef(name string, defs map[string]*SchemaNode, state map[string]resolveState) {
+	switch state[name] {
+	case resolved, inProgress:
+		return
+	}
+	state[name] = inProgress
+	node := defs[name]
+	if node != nil {
+		resolveRefs(node, defs, state)
+	}
+	state[name] = resolved
+}
+
+func resolveRefs(node *SchemaNode, defs map[string]*SchemaNode, state map[string]resolveState) {
 	if node == nil {
 		return
 	}
 
 	if node.Ref != "" {
 		name := refToDefName(node.Ref)
-		if resolved, ok := defs[name]; ok {
-			*node = *resolved
+		if _, ok := defs[name]; ok {
+			// Ensure the target def is resolved before copying.
+			resolveDef(name, defs, state)
+			*node = *defs[name]
 			return
 		}
 	}
 
 	for _, prop := range node.Properties {
-		resolveRefs(prop, defs)
+		resolveRefs(prop, defs, state)
 	}
 	for _, pp := range node.PatternProperties {
-		resolveRefs(pp, defs)
+		resolveRefs(pp, defs, state)
 	}
-	resolveRefs(node.AdditionalProperties, defs)
-	resolveRefs(node.Items, defs)
-	resolveRefs(node.Not, defs)
-	resolveRefs(node.If, defs)
-	resolveRefs(node.Then, defs)
-	resolveRefs(node.Else, defs)
+	resolveRefs(node.AdditionalProperties, defs, state)
+	resolveRefs(node.Items, defs, state)
+	resolveRefs(node.Not, defs, state)
+	resolveRefs(node.If, defs, state)
+	resolveRefs(node.Then, defs, state)
+	resolveRefs(node.Else, defs, state)
 	for _, s := range node.OneOf {
-		resolveRefs(s, defs)
+		resolveRefs(s, defs, state)
 	}
 	for _, s := range node.AnyOf {
-		resolveRefs(s, defs)
+		resolveRefs(s, defs, state)
 	}
 	for _, s := range node.AllOf {
-		resolveRefs(s, defs)
+		resolveRefs(s, defs, state)
 	}
 }
 

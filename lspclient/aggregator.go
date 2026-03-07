@@ -93,7 +93,7 @@ func (a *DiagnosticAggregator) flush(uri protocol.DocumentURI) {
 	sourcesMap := a.sources[uri]
 	delete(a.timers, uri)
 
-	var merged []protocol.Diagnostic
+	merged := make([]protocol.Diagnostic, 0)
 	for _, diags := range sourcesMap {
 		merged = append(merged, diags...)
 	}

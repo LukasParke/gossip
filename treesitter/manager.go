@@ -61,16 +61,18 @@ func (m *Manager) Registry() *Registry {
 }
 
 // GetTree returns the current tree for the given document URI.
+// The URI is normalized before lookup.
 func (m *Manager) GetTree(uri protocol.DocumentURI) *Tree {
+	key := protocol.NormalizeURI(uri)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.trees[uri]
+	return m.trees[key]
 }
 
 // handleOpen is called when a document is opened. It creates a parser and
 // performs the initial full parse.
 func (m *Manager) handleOpen(doc *document.Document) {
-	uri := doc.URI()
+	uri := protocol.NormalizeURI(doc.URI())
 	lang, err := m.registry.LanguageForURI(string(uri), doc.LanguageID())
 	if err != nil {
 		return
@@ -109,14 +111,15 @@ func (m *Manager) handleOpen(doc *document.Document) {
 
 // handleClose is called when a document is closed. It cleans up the parser and tree.
 func (m *Manager) handleClose(uri protocol.DocumentURI) {
+	key := protocol.NormalizeURI(uri)
 	m.mu.Lock()
-	if parser, ok := m.parsers[uri]; ok {
+	if parser, ok := m.parsers[key]; ok {
 		parser.Close()
-		delete(m.parsers, uri)
+		delete(m.parsers, key)
 	}
-	if tree, ok := m.trees[uri]; ok {
+	if tree, ok := m.trees[key]; ok {
 		tree.Close()
-		delete(m.trees, uri)
+		delete(m.trees, key)
 	}
 	m.mu.Unlock()
 }
@@ -141,23 +144,19 @@ func (m *Manager) handleEdits(uri protocol.DocumentURI, edits []document.EditRan
 		return
 	}
 
+	// Use the old tree's source for converting UTF-16 positions to byte
+	// columns for StartPosition and OldEndPosition. The Encoder handles
+	// the UTF-16 → byte column conversion that tree-sitter requires.
+	oldEnc := NewEncoder(oldTree.src)
+
 	for _, edit := range edits {
 		oldTree.raw.Edit(&tree_sitter.InputEdit{
-			StartByte:  uint(edit.StartByte),
-			OldEndByte: uint(edit.OldEndByte),
-			NewEndByte: uint(edit.NewEndByte),
-			StartPosition: tree_sitter.Point{
-				Row:    uint(edit.StartPos.Line),
-				Column: uint(edit.StartPos.Character),
-			},
-			OldEndPosition: tree_sitter.Point{
-				Row:    uint(edit.OldEndPos.Line),
-				Column: uint(edit.OldEndPos.Character),
-			},
-			NewEndPosition: tree_sitter.Point{
-				Row:    uint(edit.NewEndPos.Line),
-				Column: uint(edit.NewEndPos.Character),
-			},
+			StartByte:      uint(edit.StartByte),
+			OldEndByte:     uint(edit.OldEndByte),
+			NewEndByte:     uint(edit.NewEndByte),
+			StartPosition:  oldEnc.Point(edit.StartPos),
+			OldEndPosition: oldEnc.Point(edit.OldEndPos),
+			NewEndPosition: byteColumnPoint(edit.NewEndByte, []byte(doc.Text())),
 		})
 	}
 
@@ -178,6 +177,25 @@ func (m *Manager) handleEdits(uri protocol.DocumentURI, edits []document.EditRan
 	for _, cb := range callbacks {
 		cb(uri, wrapped)
 	}
+}
+
+// byteColumnPoint computes a tree-sitter Point (row + byte column) from a
+// byte offset in the given source text. This avoids the UTF-16 conversion
+// issue when building Points for the new text coordinate space.
+func byteColumnPoint(byteOffset int, src []byte) tree_sitter.Point {
+	if byteOffset > len(src) {
+		byteOffset = len(src)
+	}
+	row := uint(0)
+	lastNewline := -1
+	for i := 0; i < byteOffset; i++ {
+		if src[i] == '\n' {
+			row++
+			lastNewline = i
+		}
+	}
+	col := uint(byteOffset - lastNewline - 1)
+	return tree_sitter.Point{Row: row, Column: col}
 }
 
 // computeTreeDiff builds a TreeDiff from the old (edited) and new (reparsed) trees.
