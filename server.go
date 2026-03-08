@@ -266,6 +266,10 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 		return
 	case protocol.MethodInitialized:
 		s.logger.Info("client initialized")
+		// Hold docSyncMu while running onInitialized callbacks to ensure
+		// didOpen/didClose/didChange cannot be processed until initialization
+		// (aggregator wiring, ruleset loading, etc.) is fully complete.
+		s.docSyncMu.Lock()
 		s.mu.RLock()
 		fns := make([]func(*Context), len(s.onInitializedFns))
 		copy(fns, s.onInitializedFns)
@@ -273,6 +277,7 @@ func (s *Server) dispatchNotification(ctx context.Context, method string, params
 		for _, fn := range fns {
 			fn(gctx)
 		}
+		s.docSyncMu.Unlock()
 		return
 	case protocol.MethodExit:
 		s.logger.Info("received exit notification")

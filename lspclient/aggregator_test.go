@@ -95,9 +95,15 @@ func TestAggregator_FlushNow(t *testing.T) {
 }
 
 func TestAggregator_Clear(t *testing.T) {
-	callCount := 0
+	var mu sync.Mutex
+	var publishes [][]protocol.Diagnostic
+
 	agg := NewDiagnosticAggregator(func(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
-		callCount++
+		mu.Lock()
+		defer mu.Unlock()
+		cp := make([]protocol.Diagnostic, len(params.Diagnostics))
+		copy(cp, params.Diagnostics)
+		publishes = append(publishes, cp)
 		return nil
 	}, 10*time.Millisecond)
 
@@ -107,8 +113,15 @@ func TestAggregator_Clear(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	if callCount != 0 {
-		t.Errorf("expected 0 publishes after Clear, got %d", callCount)
+	mu.Lock()
+	defer mu.Unlock()
+	// Clear publishes one empty diagnostic set to clean the client, then the
+	// debounce timer should NOT fire (it was cancelled).
+	if len(publishes) != 1 {
+		t.Errorf("expected 1 publish (empty) after Clear, got %d", len(publishes))
+	}
+	if len(publishes) > 0 && len(publishes[0]) != 0 {
+		t.Errorf("expected empty diagnostics from Clear, got %d", len(publishes[0]))
 	}
 }
 

@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type DiagnosticAggregator struct {
 	timers  map[protocol.DocumentURI]*time.Timer
 	publish PublishFunc
 	delay   time.Duration
+	logger  *slog.Logger
 }
 
 // NewDiagnosticAggregator creates an aggregator that publishes via the given
@@ -33,7 +35,15 @@ func NewDiagnosticAggregator(publish PublishFunc, delay time.Duration) *Diagnost
 		timers:  make(map[protocol.DocumentURI]*time.Timer),
 		publish: publish,
 		delay:   delay,
+		logger:  slog.Default(),
 	}
+}
+
+// SetLogger sets the logger used for debug tracing of aggregator operations.
+func (a *DiagnosticAggregator) SetLogger(l *slog.Logger) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.logger = l
 }
 
 // SetPublishFunc sets (or replaces) the function used to publish merged
@@ -51,6 +61,8 @@ func (a *DiagnosticAggregator) Set(uri protocol.DocumentURI, source string, diag
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	a.logger.Debug("aggregator.Set", "uri", uri, "source", source, "count", len(diags))
+
 	if a.sources[uri] == nil {
 		a.sources[uri] = make(map[string][]protocol.Diagnostic)
 	}
@@ -67,6 +79,7 @@ func (a *DiagnosticAggregator) Set(uri protocol.DocumentURI, source string, diag
 // FlushNow immediately publishes the merged diagnostics for a URI, bypassing
 // the debounce timer. Useful on didClose to ensure a clean state.
 func (a *DiagnosticAggregator) FlushNow(uri protocol.DocumentURI) {
+	a.logger.Debug("aggregator.FlushNow", "uri", uri)
 	a.mu.Lock()
 	if t, ok := a.timers[uri]; ok {
 		t.Stop()
@@ -76,16 +89,30 @@ func (a *DiagnosticAggregator) FlushNow(uri protocol.DocumentURI) {
 	a.flush(uri)
 }
 
-// Clear removes all source data for a URI and cancels any pending timer.
+// Clear removes all source data for a URI, cancels any pending timer, and
+// publishes an empty diagnostic set so the client has a clean slate. This
+// ensures that a reclassification cycle (didClose + didOpen) does not leave
+// the client with stale diagnostics or miss the new set.
 func (a *DiagnosticAggregator) Clear(uri protocol.DocumentURI) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+
+	a.logger.Debug("aggregator.Clear", "uri", uri)
 
 	if t, ok := a.timers[uri]; ok {
 		t.Stop()
 		delete(a.timers, uri)
 	}
 	delete(a.sources, uri)
+
+	publishFn := a.publish
+	a.mu.Unlock()
+
+	if publishFn != nil {
+		_ = publishFn(context.Background(), &protocol.PublishDiagnosticsParams{
+			URI:         uri,
+			Diagnostics: []protocol.Diagnostic{},
+		})
+	}
 }
 
 func (a *DiagnosticAggregator) flush(uri protocol.DocumentURI) {
@@ -94,11 +121,14 @@ func (a *DiagnosticAggregator) flush(uri protocol.DocumentURI) {
 	delete(a.timers, uri)
 
 	merged := make([]protocol.Diagnostic, 0)
+	numSources := len(sourcesMap)
 	for _, diags := range sourcesMap {
 		merged = append(merged, diags...)
 	}
 	publishFn := a.publish
 	a.mu.Unlock()
+
+	a.logger.Debug("aggregator.flush", "uri", uri, "totalDiags", len(merged), "sources", numSources)
 
 	if publishFn != nil {
 		_ = publishFn(context.Background(), &protocol.PublishDiagnosticsParams{

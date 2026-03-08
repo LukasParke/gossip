@@ -59,6 +59,7 @@ gossip/
 ├── protocol/       LSP 3.18 types (handwritten + code-generated)
 ├── document/       Thread-safe document store with position utilities
 ├── treesitter/     Native tree-sitter integration with incremental diagnostics
+├── lspclient/      Child LSP client, diagnostic aggregator (multi-source merge + debounce)
 ├── config/         TOML config system with hot-reload
 ├── middleware/     Composable middleware (logging, recovery, tracing, telemetry)
 ├── gossiptest/     Testing utilities
@@ -203,6 +204,50 @@ s.Analyze(treesitter.Analyzer{
 ```
 
 The `DiagnosticEngine` orchestrates everything: it determines which checks/analyzers are affected by each `TreeDiff`, runs them with scoped query cursors, caches results per-check, and publishes merged diagnostics to the client automatically.
+
+## Child LSP Client (`lspclient`)
+
+The `lspclient` package lets your server delegate syntax-level work to child language servers (e.g., `yaml-language-server` or `vscode-json-language-server`) and merge their diagnostics with your own.
+
+### DiagnosticAggregator
+
+The `DiagnosticAggregator` collects diagnostics from multiple named sources for each URI, debounces, and publishes a merged set to the client:
+
+```go
+agg := lspclient.NewDiagnosticAggregator(client.PublishDiagnostics, 80*time.Millisecond)
+
+// Your server's diagnostics
+agg.Set(uri, "my-server", myDiags)
+
+// Child LSP diagnostics
+agg.Set(uri, "yaml-ls", yamlDiags)
+
+// On document close, clear all sources and publish empty diagnostics
+agg.Clear(uri)
+```
+
+The aggregator is safe for concurrent use. `Clear` cancels any pending debounce timer and immediately publishes an empty diagnostic set so the client does not show stale results.
+
+### Child LSP Client
+
+`lspclient.Client` manages the lifecycle of a child language server process. It handles spawning, initialization, document synchronization, and shutdown:
+
+```go
+child := lspclient.NewClient(lspclient.ClientOptions{
+    Command: "yaml-language-server",
+    Args:    []string{"--stdio"},
+    Logger:  logger,
+})
+child.OnDiagnostics(func(uri protocol.DocumentURI, diags []protocol.Diagnostic) {
+    aggregator.Set(uri, "yaml-ls", diags)
+})
+child.Start(ctx)
+defer child.Stop()
+```
+
+## Document Lifecycle Guarantees
+
+Gossip serializes `didOpen`, `didChange`, and `didClose` notifications using an internal mutex (`docSyncMu`). This prevents races when a client reclassifies a document's language (sending `didClose` + `didOpen` in quick succession) and ensures that `OnInitialized` callbacks complete before any document notifications are processed. This guarantee is critical for servers that wire up diagnostic aggregators or load rulesets during initialization.
 
 ## Multi-Root Workspace Support
 
