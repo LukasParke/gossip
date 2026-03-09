@@ -58,6 +58,7 @@ func (a *DiagnosticAggregator) SetPublishFunc(fn PublishFunc) {
 // Set records diagnostics from a named source for the given URI and schedules
 // a debounced flush. Multiple rapid calls for the same URI reset the timer.
 func (a *DiagnosticAggregator) Set(uri protocol.DocumentURI, source string, diags []protocol.Diagnostic) {
+	uri = protocol.NormalizeURI(uri)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -79,6 +80,7 @@ func (a *DiagnosticAggregator) Set(uri protocol.DocumentURI, source string, diag
 // FlushNow immediately publishes the merged diagnostics for a URI, bypassing
 // the debounce timer. Useful on didClose to ensure a clean state.
 func (a *DiagnosticAggregator) FlushNow(uri protocol.DocumentURI) {
+	uri = protocol.NormalizeURI(uri)
 	a.logger.Debug("aggregator.FlushNow", "uri", uri)
 	a.mu.Lock()
 	if t, ok := a.timers[uri]; ok {
@@ -89,11 +91,35 @@ func (a *DiagnosticAggregator) FlushNow(uri protocol.DocumentURI) {
 	a.flush(uri)
 }
 
+// ClearSource removes diagnostics for a single named source and schedules a
+// debounced flush so the merged result is updated without wiping other sources.
+// Use this instead of Clear when only one contributor (e.g. a child LSP) is
+// being closed while others (e.g. the main diagnostic engine) should keep
+// their diagnostics intact.
+func (a *DiagnosticAggregator) ClearSource(uri protocol.DocumentURI, source string) {
+	uri = protocol.NormalizeURI(uri)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.logger.Debug("aggregator.ClearSource", "uri", uri, "source", source)
+	if sources, ok := a.sources[uri]; ok {
+		delete(sources, source)
+	}
+
+	if t, ok := a.timers[uri]; ok {
+		t.Stop()
+	}
+	a.timers[uri] = time.AfterFunc(a.delay, func() {
+		a.flush(uri)
+	})
+}
+
 // Clear removes all source data for a URI, cancels any pending timer, and
 // publishes an empty diagnostic set so the client has a clean slate. This
 // ensures that a reclassification cycle (didClose + didOpen) does not leave
 // the client with stale diagnostics or miss the new set.
 func (a *DiagnosticAggregator) Clear(uri protocol.DocumentURI) {
+	uri = protocol.NormalizeURI(uri)
 	a.mu.Lock()
 
 	a.logger.Debug("aggregator.Clear", "uri", uri)
@@ -122,8 +148,10 @@ func (a *DiagnosticAggregator) flush(uri protocol.DocumentURI) {
 
 	merged := make([]protocol.Diagnostic, 0)
 	numSources := len(sourcesMap)
-	for _, diags := range sourcesMap {
+	srcCounts := make(map[string]int)
+	for src, diags := range sourcesMap {
 		merged = append(merged, diags...)
+		srcCounts[src] = len(diags)
 	}
 	publishFn := a.publish
 	a.mu.Unlock()

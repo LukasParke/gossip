@@ -164,6 +164,16 @@ func TestFolderFor(t *testing.T) {
 	if noMatch != nil {
 		t.Errorf("FolderFor(file:///other/workspace/file.go) = %+v, want nil", noMatch)
 	}
+
+	// Variant URI with dot segments should still resolve to the correct folder
+	variant := protocol.DocumentURI("file:///workspace/project-a/sub/../file.go")
+	folder := s.FolderFor(variant)
+	if folder == nil {
+		t.Fatalf("FolderFor(%q) = nil, want folder with Name project-a", variant)
+	}
+	if folder.Name != "project-a" {
+		t.Errorf("FolderFor(%q).Name = %q, want project-a", variant, folder.Name)
+	}
 }
 
 func TestDispatch_Initialize(t *testing.T) {

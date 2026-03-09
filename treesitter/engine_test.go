@@ -315,6 +315,64 @@ func TestCheck_IncrementalUpdate(t *testing.T) {
 	}
 }
 
+func TestCheck_IncrementalUpdate_DropsStaleAfterLineShift(t *testing.T) {
+	store, _, engine, pc := setup(t)
+
+	engine.RegisterCheck("number-values", treesitter.Check{
+		Pattern:  "(number) @num",
+		Severity: protocol.SeverityWarning,
+		Message:  func(c treesitter.Capture) string { return c.Text },
+	})
+
+	uri := protocol.DocumentURI("file:///shift.json")
+	store.Open(&protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: uri, LanguageID: "json", Version: 1,
+			Text: "{\n  \"a\": 1,\n  \"b\": 2\n}",
+		},
+	})
+
+	p := pc.waitFor(t, string(uri), 2*time.Second)
+	if len(p.Diagnostics) != 2 {
+		t.Fatalf("expected 2 number diagnostics on open, got %d", len(p.Diagnostics))
+	}
+
+	// Insert a new pair near the top. This shifts existing diagnostics down and
+	// previously could leave stale cached ranges behind.
+	store.Change(&protocol.DidChangeTextDocumentParams{
+		TextDocument: protocol.VersionedTextDocumentIdentifier{
+			TextDocumentIdentifier: protocol.TextDocumentIdentifier{URI: uri},
+			Version:                2,
+		},
+		ContentChanges: []protocol.TextDocumentContentChangeEvent{
+			{
+				Range: &protocol.Range{
+					Start: protocol.Position{Line: 0, Character: 1},
+					End:   protocol.Position{Line: 0, Character: 1},
+				},
+				Text: "\n  \"x\": 0,",
+			},
+		},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	p = pc.latest(string(uri))
+	if p == nil {
+		t.Fatal("expected diagnostics after incremental edit")
+	}
+	if len(p.Diagnostics) != 3 {
+		t.Fatalf("expected 3 number diagnostics after edit, got %d", len(p.Diagnostics))
+	}
+
+	counts := map[string]int{}
+	for _, d := range p.Diagnostics {
+		counts[d.Message]++
+	}
+	if counts["0"] != 1 || counts["1"] != 1 || counts["2"] != 1 {
+		t.Fatalf("expected exactly one diagnostic per number, got counts=%v", counts)
+	}
+}
+
 func TestAnalyzer_RunsWithDiff(t *testing.T) {
 	store, _, engine, pc := setup(t)
 
@@ -458,21 +516,14 @@ func TestAnalyzer_MergePrevious(t *testing.T) {
 		t.Fatal("expected diagnostics after edit")
 	}
 
-	foundLine1 := false
 	foundUpdated := false
 	for _, d := range p.Diagnostics {
-		if d.Message == "diag-line-1" {
-			foundLine1 = true
-		}
 		if d.Message == "updated-diag-at-value" {
 			foundUpdated = true
 		}
-		if d.Message == "diag-at-value" {
-			t.Error("stale 'diag-at-value' should have been replaced by merge (overlaps changed range)")
+		if d.Message == "diag-line-1" || d.Message == "diag-at-value" {
+			t.Error("expected previous diagnostics to be dropped when returning incremental fresh results")
 		}
-	}
-	if !foundLine1 {
-		t.Error("expected 'diag-line-1' to survive merge (not in changed range)")
 	}
 	if !foundUpdated {
 		t.Error("expected 'updated-diag-at-value' from fresh diagnostics")

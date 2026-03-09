@@ -360,3 +360,83 @@ func TestAggregator_SourceReplacement(t *testing.T) {
 		t.Errorf("expected 'new error', got %q", lastPublished[0].Message)
 	}
 }
+
+func TestAggregator_URIVariantsMerge(t *testing.T) {
+	var mu sync.Mutex
+	var lastPublished []protocol.Diagnostic
+	var publishedURI protocol.DocumentURI
+	publishCount := 0
+
+	agg := NewDiagnosticAggregator(func(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
+		mu.Lock()
+		defer mu.Unlock()
+		publishedURI = params.URI
+		lastPublished = append(lastPublished[:0], params.Diagnostics...)
+		publishCount++
+		return nil
+	}, 10*time.Millisecond)
+
+	canonical := protocol.DocumentURI("file:///home/user/api.yaml")
+	variant := protocol.DocumentURI("file:///home/user/sub/../api.yaml")
+
+	agg.Set(canonical, "telescope", []protocol.Diagnostic{
+		{Message: "telescope error", Source: "telescope"},
+	})
+	agg.Set(variant, "yaml-ls", []protocol.Diagnostic{
+		{Message: "yaml error", Source: "yaml-language-server"},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lastPublished) != 2 {
+		t.Errorf("expected 2 merged diagnostics from variant URIs, got %d", len(lastPublished))
+	}
+	if publishedURI != canonical {
+		t.Errorf("expected canonical URI %s, got %s", canonical, publishedURI)
+	}
+}
+
+func TestAggregator_ClearSourceVariantURI(t *testing.T) {
+	var mu sync.Mutex
+	var lastPublished []protocol.Diagnostic
+
+	agg := NewDiagnosticAggregator(func(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
+		mu.Lock()
+		defer mu.Unlock()
+		lastPublished = append(lastPublished[:0], params.Diagnostics...)
+		return nil
+	}, 10*time.Millisecond)
+
+	canonical := protocol.DocumentURI("file:///home/user/api.yaml")
+	variant := protocol.DocumentURI("file:///home/user/sub/../api.yaml")
+
+	agg.Set(canonical, "telescope", []protocol.Diagnostic{
+		{Message: "telescope error", Source: "telescope"},
+	})
+	agg.Set(canonical, "yaml-ls", []protocol.Diagnostic{
+		{Message: "yaml error", Source: "yaml-language-server"},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(lastPublished) != 2 {
+		t.Fatalf("expected 2 diagnostics initially, got %d", len(lastPublished))
+	}
+	mu.Unlock()
+
+	// Clear yaml-ls using a variant URI — should still find and clear it
+	agg.ClearSource(variant, "yaml-ls")
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lastPublished) != 1 {
+		t.Errorf("expected 1 diagnostic after ClearSource with variant URI, got %d", len(lastPublished))
+	}
+	if len(lastPublished) > 0 && lastPublished[0].Source != "telescope" {
+		t.Errorf("expected remaining diagnostic from telescope, got source=%q", lastPublished[0].Source)
+	}
+}

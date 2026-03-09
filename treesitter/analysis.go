@@ -105,23 +105,13 @@ type AnalysisContext struct {
 	UserData interface{}
 }
 
-// MergePrevious takes freshly computed diagnostics (covering only the changed
-// regions) and merges them with ctx.Previous from unchanged regions. It drops
-// any previous diagnostic whose range overlaps ctx.Diff.ChangedRanges, then
-// appends fresh. Use this when a ScopeFile analyzer only re-checks affected
-// regions but must return a complete diagnostic set. If ctx.Diff is nil or has
-// no ChangedRanges, returns fresh unchanged.
+// MergePrevious returns fresh diagnostics unchanged.
+//
+// Historically this helper tried to merge ctx.Previous diagnostics by removing
+// entries overlapping ctx.Diff.ChangedRanges. That strategy compares ranges in
+// different coordinate spaces (previous vs current document) after edits, which
+// can keep stale diagnostics or drop valid ones. Until coordinate translation
+// is available, callers should return a full current-document set.
 func (ctx *AnalysisContext) MergePrevious(fresh []protocol.Diagnostic) []protocol.Diagnostic {
-	if ctx.Diff == nil || len(ctx.Diff.ChangedRanges) == 0 {
-		return fresh
-	}
-
-	merged := make([]protocol.Diagnostic, 0, len(ctx.Previous)+len(fresh))
-	for _, d := range ctx.Previous {
-		if !d.Range.OverlapsAny(ctx.Diff.ChangedRanges) {
-			merged = append(merged, d)
-		}
-	}
-	merged = append(merged, fresh...)
-	return merged
+	return fresh
 }

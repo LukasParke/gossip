@@ -370,10 +370,7 @@ func (s *Server) startConfigWatchers() {
 }
 
 func uriToPath(uri string) string {
-	if strings.HasPrefix(uri, "file://") {
-		return strings.TrimPrefix(uri, "file://")
-	}
-	return uri
+	return protocol.URIToPath(protocol.NormalizeURI(protocol.DocumentURI(uri)))
 }
 
 func uriBasename(uri string) string {
@@ -466,8 +463,9 @@ func (s *Server) dispatchNotificationToHandler(ctx *Context, method string, para
 func (s *Server) handleWorkspaceFolderChange(event protocol.WorkspaceFoldersChangeEvent) {
 	s.mu.Lock()
 	for _, removed := range event.Removed {
+		normRemoved := protocol.NormalizeURI(removed.URI)
 		for i, f := range s.workspaceFolders {
-			if f.URI == removed.URI {
+			if protocol.NormalizeURI(f.URI) == normRemoved {
 				s.workspaceFolders = append(s.workspaceFolders[:i], s.workspaceFolders[i+1:]...)
 				break
 			}
@@ -511,11 +509,11 @@ func (s *Server) HandleNotification(method string, h RawNotificationHandler) {
 func (s *Server) FolderFor(uri protocol.DocumentURI) *protocol.WorkspaceFolder {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	uriStr := string(uri)
+	uriStr := string(protocol.NormalizeURI(uri))
 	var best *protocol.WorkspaceFolder
 	bestLen := 0
 	for i := range s.workspaceFolders {
-		prefix := string(s.workspaceFolders[i].URI)
+		prefix := string(protocol.NormalizeURI(s.workspaceFolders[i].URI))
 		if strings.HasPrefix(uriStr, prefix) && len(prefix) > bestLen {
 			best = &s.workspaceFolders[i]
 			bestLen = len(prefix)
@@ -532,6 +530,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(HoverHandler)(ctx, &p)
 
 	case protocol.MethodCompletion:
@@ -539,6 +538,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(CompletionHandler)(ctx, &p)
 
 	case protocol.MethodDefinition:
@@ -546,6 +546,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DefinitionHandler)(ctx, &p)
 
 	case protocol.MethodReferences:
@@ -553,6 +554,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(ReferencesHandler)(ctx, &p)
 
 	case protocol.MethodDocumentSymbol:
@@ -560,6 +562,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DocumentSymbolHandler)(ctx, &p)
 
 	case protocol.MethodCodeAction:
@@ -567,6 +570,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(CodeActionHandler)(ctx, &p)
 
 	case protocol.MethodFormatting:
@@ -574,6 +578,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(FormattingHandler)(ctx, &p)
 
 	case protocol.MethodRename:
@@ -581,6 +586,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(RenameHandler)(ctx, &p)
 
 	case protocol.MethodSignatureHelp:
@@ -588,6 +594,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(SignatureHelpHandler)(ctx, &p)
 
 	case protocol.MethodDocumentHighlight:
@@ -595,6 +602,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DocumentHighlightHandler)(ctx, &p)
 
 	case protocol.MethodFoldingRange:
@@ -602,6 +610,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(FoldingRangeHandler)(ctx, &p)
 
 	case protocol.MethodInlayHint:
@@ -609,6 +618,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(InlayHintHandler)(ctx, &p)
 
 	case protocol.MethodSemanticTokensFull:
@@ -616,6 +626,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(SemanticTokensHandler)(ctx, &p)
 
 	case protocol.MethodCodeLens:
@@ -623,6 +634,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(CodeLensHandler)(ctx, &p)
 
 	case protocol.MethodWorkspaceSymbol:
@@ -637,6 +649,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DeclarationHandler)(ctx, &p)
 
 	case protocol.MethodTypeDefinition:
@@ -644,6 +657,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(TypeDefinitionHandler)(ctx, &p)
 
 	case protocol.MethodImplementation:
@@ -651,6 +665,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(ImplementationHandler)(ctx, &p)
 
 	case protocol.MethodPrepareRename:
@@ -658,6 +673,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(PrepareRenameHandler)(ctx, &p)
 
 	case protocol.MethodRangeFormatting:
@@ -665,6 +681,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(RangeFormattingHandler)(ctx, &p)
 
 	case protocol.MethodDocumentLink:
@@ -672,6 +689,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DocumentLinkHandler)(ctx, &p)
 
 	case protocol.MethodSelectionRange:
@@ -679,6 +697,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(SelectionRangeHandler)(ctx, &p)
 
 	case protocol.MethodExecuteCommand:
@@ -693,6 +712,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(SemanticTokensRangeHandler)(ctx, &p)
 
 	case protocol.MethodCompletionResolve:
@@ -714,6 +734,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(DocumentDiagnosticHandler)(ctx, &p)
 
 	case protocol.MethodLinkedEditingRange:
@@ -721,6 +742,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(LinkedEditingRangeHandler)(ctx, &p)
 
 	case protocol.MethodPrepareCallHierarchy:
@@ -728,6 +750,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(PrepareCallHierarchyHandler)(ctx, &p)
 
 	case protocol.MethodCallHierarchyIncoming:
@@ -749,6 +772,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return handler.(PrepareTypeHierarchyHandler)(ctx, &p)
 
 	case protocol.MethodTypeHierarchySupertypes:
@@ -765,12 +789,14 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		}
 		return handler.(TypeHierarchySubtypesHandler)(ctx, &p)
 
-	// Notification handlers
+	// Notification handlers — normalize URIs so registered handlers always
+	// see the canonical form that matches the document store and caches.
 	case protocol.MethodDidOpen:
 		var p protocol.DidOpenTextDocumentParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return nil, handler.(DidOpenHandler)(ctx, &p)
 
 	case protocol.MethodDidChange:
@@ -778,6 +804,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return nil, handler.(DidChangeHandler)(ctx, &p)
 
 	case protocol.MethodDidClose:
@@ -785,6 +812,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return nil, handler.(DidCloseHandler)(ctx, &p)
 
 	case protocol.MethodDidSave:
@@ -792,6 +820,7 @@ func callHandler(ctx *Context, handler interface{}, method string, params jsonrp
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: err.Error()}
 		}
+		p.TextDocument.URI = protocol.NormalizeURI(p.TextDocument.URI)
 		return nil, handler.(DidSaveHandler)(ctx, &p)
 
 	case protocol.MethodDidChangeConfiguration:

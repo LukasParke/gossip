@@ -2,14 +2,34 @@ package treesitter
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"os"
 	"sync"
+	"time"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/LukasParke/gossip/document"
 	"github.com/LukasParke/gossip/protocol"
 )
+
+// #region agent log
+func debugPublishDirect(uri string, preCount, postCount int) {
+	entry := map[string]interface{}{"sessionId": "f3b0db", "location": "engine.go:PublishDirect", "message": "PublishDirect called", "data": map[string]interface{}{"uri": uri, "preXformCount": preCount, "postXformCount": postCount}, "timestamp": time.Now().UnixMilli()}
+	b, _ := json.Marshal(entry)
+	f, err := os.OpenFile("/home/luke/Documents/GitHub/telescope/.cursor/debug-f3b0db.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	f.Write(append(b, '\n'))
+	f.Close()
+}
+
+var _ = fmt.Sprintf // keep fmt import
+
+// #endregion
 
 // PublishFunc sends diagnostics to the LSP client. The server layer provides
 // the concrete implementation backed by ClientProxy.
@@ -128,9 +148,13 @@ func (e *DiagnosticEngine) PublishDirect(ctx context.Context, uri protocol.Docum
 		return nil
 	}
 
+	preXformCount := len(diags)
 	if xform != nil {
 		diags = xform(uri, diags)
 	}
+	// #region agent log
+	debugPublishDirect(string(uri), preXformCount, len(diags))
+	// #endregion
 
 	if diags == nil {
 		diags = []protocol.Diagnostic{}
@@ -253,6 +277,9 @@ func (e *DiagnosticEngine) onTreeUpdate(uri protocol.DocumentURI, tree *Tree) {
 		all = []protocol.Diagnostic{}
 	}
 
+	// #region agent log
+	debugPublishDirect(string(uri)+"#onTreeUpdate", -1, len(all))
+	// #endregion
 	version := doc.Version()
 	if err := publishFn(context.Background(), &protocol.PublishDiagnosticsParams{
 		URI:         uri,
@@ -282,16 +309,12 @@ func (e *DiagnosticEngine) runChecksUnlocked(
 			continue
 		}
 
-		freshCaptures := e.executeCheckInRanges(tree, lang, nc, diff.ChangedRanges, enc)
-
-		prev := fileCache[nc.name]
-		kept := make([]protocol.Diagnostic, 0, len(prev)+len(freshCaptures))
-		for _, d := range prev {
-			if !d.Range.OverlapsAny(diff.ChangedRanges) {
-				kept = append(kept, d)
-			}
-		}
-		fileCache[nc.name] = append(kept, freshCaptures...)
+		// ChangedRanges are in post-edit coordinates, while cached diagnostics
+		// are from the previous document snapshot. Merging by range overlap can
+		// therefore retain stale diagnostics or drop valid ones. Re-run the check
+		// for the whole file to keep results deterministic.
+		diags := e.executeCheck(tree, lang, nc, enc)
+		fileCache[nc.name] = diags
 	}
 }
 
