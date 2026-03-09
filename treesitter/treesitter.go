@@ -65,6 +65,11 @@ type TreeDiff struct {
 	// ChangedRanges are the LSP ranges where the syntax tree structurally changed.
 	ChangedRanges []protocol.Range
 
+	// Edits is the sequence of text edits that produced this tree update.
+	// Positions in OldEnd are in the pre-edit snapshot; NewEnd positions are in
+	// the post-edit snapshot.
+	Edits []DiffEdit
+
 	// AffectedKinds is the set of node kinds that appear in the changed subtrees.
 	AffectedKinds map[string]bool
 
@@ -73,6 +78,13 @@ type TreeDiff struct {
 
 	// IsFullReparse is true on initial open or full-text replacement.
 	IsFullReparse bool
+}
+
+// DiffEdit describes a single text edit with old/new position endpoints.
+type DiffEdit struct {
+	Start  protocol.Position
+	OldEnd protocol.Position
+	NewEnd protocol.Position
 }
 
 // AffectsKind reports whether the diff touches any node of the given kind.

@@ -162,7 +162,15 @@ func (m *Manager) handleEdits(uri protocol.DocumentURI, edits []document.EditRan
 
 	src := []byte(doc.Text())
 	newTree := parser.Parse(src, oldTree.raw)
-	diff := computeTreeDiff(oldTree.raw, newTree)
+	diffEdits := make([]DiffEdit, 0, len(edits))
+	for _, edit := range edits {
+		diffEdits = append(diffEdits, DiffEdit{
+			Start:  edit.StartPos,
+			OldEnd: edit.OldEndPos,
+			NewEnd: edit.NewEndPos,
+		})
+	}
+	diff := computeTreeDiff(oldTree.raw, newTree, diffEdits)
 	oldTree.Close()
 	wrapped := &Tree{raw: newTree, src: src, Diff: diff}
 
@@ -199,7 +207,7 @@ func byteColumnPoint(byteOffset int, src []byte) tree_sitter.Point {
 }
 
 // computeTreeDiff builds a TreeDiff from the old (edited) and new (reparsed) trees.
-func computeTreeDiff(oldRaw, newRaw *tree_sitter.Tree) *TreeDiff {
+func computeTreeDiff(oldRaw, newRaw *tree_sitter.Tree, edits []DiffEdit) *TreeDiff {
 	tsRanges := oldRaw.ChangedRanges(newRaw)
 
 	lspRanges := make([]protocol.Range, len(tsRanges))
@@ -212,6 +220,7 @@ func computeTreeDiff(oldRaw, newRaw *tree_sitter.Tree) *TreeDiff {
 
 	diff := &TreeDiff{
 		ChangedRanges: lspRanges,
+		Edits:         edits,
 		AffectedKinds: make(map[string]bool),
 	}
 

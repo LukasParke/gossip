@@ -105,13 +105,96 @@ type AnalysisContext struct {
 	UserData interface{}
 }
 
-// MergePrevious returns fresh diagnostics unchanged.
+// MergePrevious merges freshly computed diagnostics with previous diagnostics
+// that are unaffected by the current edit.
 //
-// Historically this helper tried to merge ctx.Previous diagnostics by removing
-// entries overlapping ctx.Diff.ChangedRanges. That strategy compares ranges in
-// different coordinate spaces (previous vs current document) after edits, which
-// can keep stale diagnostics or drop valid ones. Until coordinate translation
-// is available, callers should return a full current-document set.
+// Previous diagnostic ranges are translated through ctx.Diff.Edits into the new
+// document coordinate space before overlap filtering against ChangedRanges.
+// Diagnostics that intersect edited spans are dropped.
 func (ctx *AnalysisContext) MergePrevious(fresh []protocol.Diagnostic) []protocol.Diagnostic {
-	return fresh
+	return mergePreviousDiagnostics(ctx.Previous, fresh, ctx.Diff)
+}
+
+func mergePreviousDiagnostics(previous, fresh []protocol.Diagnostic, diff *TreeDiff) []protocol.Diagnostic {
+	if diff == nil || diff.IsFullReparse {
+		return fresh
+	}
+	if len(previous) == 0 {
+		return fresh
+	}
+	if len(diff.ChangedRanges) == 0 {
+		// If nothing structurally changed, preserve previous diagnostics and
+		// append any fresh entries produced by the analyzer/check.
+		merged := make([]protocol.Diagnostic, 0, len(previous)+len(fresh))
+		merged = append(merged, previous...)
+		merged = append(merged, fresh...)
+		return merged
+	}
+	if len(diff.Edits) == 0 {
+		// Without edit mapping we cannot safely translate previous ranges.
+		return fresh
+	}
+
+	merged := make([]protocol.Diagnostic, 0, len(previous)+len(fresh))
+	for _, d := range previous {
+		rng, ok := transformRangeThroughEdits(d.Range, diff.Edits)
+		if !ok || rng.OverlapsAny(diff.ChangedRanges) {
+			continue
+		}
+		d.Range = rng
+		merged = append(merged, d)
+	}
+	merged = append(merged, fresh...)
+	return merged
+}
+
+func transformRangeThroughEdits(rng protocol.Range, edits []DiffEdit) (protocol.Range, bool) {
+	start, ok := transformPositionThroughEdits(rng.Start, edits)
+	if !ok {
+		return protocol.Range{}, false
+	}
+	end, ok := transformPositionThroughEdits(rng.End, edits)
+	if !ok {
+		return protocol.Range{}, false
+	}
+	if end.Before(start) {
+		return protocol.Range{}, false
+	}
+	return protocol.Range{Start: start, End: end}, true
+}
+
+func transformPositionThroughEdits(pos protocol.Position, edits []DiffEdit) (protocol.Position, bool) {
+	cur := pos
+	for _, edit := range edits {
+		if cur.Before(edit.Start) {
+			continue
+		}
+		if cur.Before(edit.OldEnd) {
+			// Position falls inside replaced span, so the old diagnostic is stale.
+			return protocol.Position{}, false
+		}
+		cur = shiftPositionAcrossEdit(cur, edit)
+	}
+	return cur, true
+}
+
+func shiftPositionAcrossEdit(pos protocol.Position, edit DiffEdit) protocol.Position {
+	if edit.OldEnd.Line == edit.NewEnd.Line {
+		if pos.Line == edit.OldEnd.Line {
+			deltaChar := int64(edit.NewEnd.Character) - int64(edit.OldEnd.Character)
+			pos.Character = uint32(int64(pos.Character) + deltaChar)
+		}
+		return pos
+	}
+
+	if pos.Line == edit.OldEnd.Line {
+		suffixChar := int64(pos.Character) - int64(edit.OldEnd.Character)
+		pos.Line = edit.NewEnd.Line
+		pos.Character = uint32(int64(edit.NewEnd.Character) + suffixChar)
+		return pos
+	}
+
+	lineDelta := int64(edit.NewEnd.Line) - int64(edit.OldEnd.Line)
+	pos.Line = uint32(int64(pos.Line) + lineDelta)
+	return pos
 }

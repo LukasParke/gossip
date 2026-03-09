@@ -517,16 +517,23 @@ func TestAnalyzer_MergePrevious(t *testing.T) {
 	}
 
 	foundUpdated := false
+	foundPreserved := false
 	for _, d := range p.Diagnostics {
 		if d.Message == "updated-diag-at-value" {
 			foundUpdated = true
 		}
-		if d.Message == "diag-line-1" || d.Message == "diag-at-value" {
-			t.Error("expected previous diagnostics to be dropped when returning incremental fresh results")
+		if d.Message == "diag-line-1" {
+			foundPreserved = true
+		}
+		if d.Message == "diag-at-value" {
+			t.Error("expected overlapping previous diagnostic to be dropped after incremental merge")
 		}
 	}
 	if !foundUpdated {
 		t.Error("expected 'updated-diag-at-value' from fresh diagnostics")
+	}
+	if !foundPreserved {
+		t.Error("expected unaffected previous diagnostic to be preserved after incremental merge")
 	}
 }
 

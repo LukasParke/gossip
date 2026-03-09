@@ -24,11 +24,14 @@ jobs:
       - name: Run benchmarks
         run: go test ./... -run='^$' -bench=. -benchmem -count=5 -timeout=30m | tee bench.txt
 
+      - name: Normalize benchmark metrics for alert polarity
+        run: python .github/scripts/normalize_bench_metrics.py bench.txt bench-alert.txt
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: go
-          output-file-path: bench.txt
+          output-file-path: bench-alert.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           benchmark-data-dir-path: dev/bench
