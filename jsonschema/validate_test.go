@@ -921,3 +921,103 @@ func TestRequiredPropertyRange_TargetsKey(t *testing.T) {
 	}
 	t.Error("expected diagnostic about missing 'version'")
 }
+
+func TestValidateOneOf_TitledSchemas(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"oneOf": [
+					{"type": "object", "title": "String Schema", "properties": {"format": {"type": "string"}}, "required": ["format"]},
+					{"type": "object", "title": "Integer Schema", "properties": {"minimum": {"type": "integer"}}, "required": ["minimum"]}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": {"other": "x"}}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "String Schema") && strings.Contains(d.Message, "Integer Schema") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected oneOf diagnostic to include schema titles")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestValidateOneOf_UntitledSchemas(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"oneOf": [
+					{"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+					{"type": "object", "properties": {"b": {"type": "integer"}}, "required": ["b"]}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": {"other": "x"}}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "matched none") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected generic oneOf diagnostic for untitled schemas")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}
+
+func TestValidateAnyOf_TitledSchemas(t *testing.T) {
+	schema := MustLoad([]byte(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"anyOf": [
+					{
+						"type": "object",
+						"title": "Pet Object",
+						"properties": {"name": {"type": "string"}},
+						"required": ["name"]
+					},
+					{
+						"type": "object",
+						"title": "Error Object",
+						"properties": {"code": {"type": "integer"}},
+						"required": ["code"]
+					}
+				]
+			}
+		}
+	}`))
+
+	tree := parseTree(t, `{"value": {"other": "x"}}`, jsonLang())
+	result := Validate(tree, schema, defaultOpts())
+
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "Pet Object") && strings.Contains(d.Message, "Error Object") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected anyOf diagnostic to include schema titles")
+		for _, d := range result.Diagnostics {
+			t.Logf("  %s", d.Message)
+		}
+	}
+}

@@ -329,7 +329,8 @@ func (v *validator) validateScalar(node *tree_sitter.Node, schema *SchemaNode) {
 
 func (v *validator) validateAnyOf(node *tree_sitter.Node, schemas []*SchemaNode) {
 	var bestDiags []protocol.Diagnostic
-	for _, sub := range schemas {
+	var bestIdx int
+	for i, sub := range schemas {
 		trial := &validator{
 			tree:   v.tree,
 			opts:   v.opts,
@@ -342,10 +343,19 @@ func (v *validator) validateAnyOf(node *tree_sitter.Node, schemas []*SchemaNode)
 		// Track the alternative with the fewest errors (closest match).
 		if bestDiags == nil || len(trial.diags) < len(bestDiags) {
 			bestDiags = trial.diags
+			bestIdx = i
 		}
 	}
 	// Report the diagnostics from the closest-matching alternative so the
 	// user gets specific, actionable feedback rather than a generic message.
+	// When schemas have titles, prepend context about which alternative was closest.
+	if titles := collectSchemaTitles(schemas); len(titles) > 0 {
+		closest := ""
+		if bestIdx < len(schemas) && schemas[bestIdx].Title != "" {
+			closest = fmt.Sprintf(" Closest match: %s.", schemas[bestIdx].Title)
+		}
+		v.addDiag(node, fmt.Sprintf("No alternative matched (expected one of: %s).%s Issues with closest match:", strings.Join(titles, ", "), closest), nil)
+	}
 	v.diags = append(v.diags, bestDiags...)
 }
 
@@ -363,8 +373,23 @@ func (v *validator) validateOneOf(node *tree_sitter.Node, schemas []*SchemaNode)
 		}
 	}
 	if matchCount == 0 {
-		v.addDiag(node, "Value must match exactly one schema (oneOf), but matched none", nil)
+		if titles := collectSchemaTitles(schemas); len(titles) > 0 {
+			v.addDiag(node, fmt.Sprintf("Value must match one of: %s", strings.Join(titles, ", ")), nil)
+		} else {
+			v.addDiag(node, "Value must match exactly one schema (oneOf), but matched none", nil)
+		}
 	}
+}
+
+// collectSchemaTitles returns the non-empty Title fields from the given schemas.
+func collectSchemaTitles(schemas []*SchemaNode) []string {
+	var titles []string
+	for _, s := range schemas {
+		if s.Title != "" {
+			titles = append(titles, s.Title)
+		}
+	}
+	return titles
 }
 
 func (v *validator) validateNot(node *tree_sitter.Node, notSchema *SchemaNode) {
