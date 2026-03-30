@@ -11,7 +11,7 @@ on:
         type: string
 
 concurrency:
-  group: release
+  group: gossip-release
   cancel-in-progress: false
 
 permissions:
@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Resolve version
         id: version
