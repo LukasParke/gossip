@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"runtime"
 	"testing"
 )
 
@@ -99,6 +100,92 @@ func TestNormalizeURI_ConsistentKeys(t *testing.T) {
 		"file:///home/user/./test.yaml",
 		"file:///home/user/sub/../test.yaml",
 		"file://localhost/home/user/test.yaml",
+	}
+	first := NormalizeURI(uris[0])
+	for _, uri := range uris[1:] {
+		got := NormalizeURI(uri)
+		if got != first {
+			t.Errorf("NormalizeURI(%q) = %q, want %q (same as base)", uri, got, first)
+		}
+	}
+}
+
+func TestNormalizeURI_WindowsDriveLetters(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-letter normalization only applies on Windows")
+	}
+
+	tests := []struct {
+		name     string
+		input    DocumentURI
+		expected DocumentURI
+	}{
+		{
+			name:     "uppercase drive letter preserved",
+			input:    "file:///C:/Users/runner/test.yaml",
+			expected: "file:///C:/Users/runner/test.yaml",
+		},
+		{
+			name:     "lowercase drive letter uppercased",
+			input:    "file:///c:/Users/runner/test.yaml",
+			expected: "file:///C:/Users/runner/test.yaml",
+		},
+		{
+			name:     "encoded colon in drive letter decoded and uppercased",
+			input:    "file:///d%3A/a/telescope/test.yaml",
+			expected: "file:///D:/a/telescope/test.yaml",
+		},
+		{
+			name:     "encoded lowercase colon uppercased",
+			input:    "file:///c%3A/a/telescope/test.yaml",
+			expected: "file:///C:/a/telescope/test.yaml",
+		},
+		{
+			name:     "dot segments with drive letter",
+			input:    "file:///C:/Users/runner/sub/../test.yaml",
+			expected: "file:///C:/Users/runner/test.yaml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeURI(tt.input)
+			if got != tt.expected {
+				t.Errorf("NormalizeURI(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeURI_WindowsIdempotent(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-letter normalization only applies on Windows")
+	}
+
+	uris := []DocumentURI{
+		"file:///C:/Users/runner/test.yaml",
+		"file:///c:/Users/runner/test.yaml",
+		"file:///d%3A/a/telescope/test.yaml",
+		"file:///C:/Users/runner/sub/../test.yaml",
+	}
+	for _, uri := range uris {
+		first := NormalizeURI(uri)
+		second := NormalizeURI(first)
+		if first != second {
+			t.Errorf("NormalizeURI not idempotent on Windows: %q → %q → %q", uri, first, second)
+		}
+	}
+}
+
+func TestNormalizeURI_WindowsConsistentKeys(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-letter normalization only applies on Windows")
+	}
+
+	uris := []DocumentURI{
+		"file:///C:/Users/runner/test.yaml",
+		"file:///c:/Users/runner/test.yaml",
+		"file:///C:/Users/runner/./test.yaml",
 	}
 	first := NormalizeURI(uris[0])
 	for _, uri := range uris[1:] {

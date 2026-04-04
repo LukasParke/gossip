@@ -38,15 +38,31 @@ func NormalizeURI(uri DocumentURI) DocumentURI {
 	// and filepath.Clean handle this correctly.
 	cleaned := filepath.Clean(filepath.FromSlash(path))
 
+	// On Windows, filepath.Clean preserves a leading separator before the
+	// drive letter (e.g. \C:\foo). Strip it so the drive-letter check below
+	// can find the colon at index 1.
+	if runtime.GOOS == "windows" && len(cleaned) > 0 && (cleaned[0] == '/' || cleaned[0] == '\\') {
+		if len(cleaned) >= 3 && cleaned[2] == ':' {
+			cleaned = cleaned[1:]
+		}
+	}
+
 	// Normalize Windows drive letters to uppercase (C: not c:).
 	if runtime.GOOS == "windows" && len(cleaned) >= 2 && cleaned[1] == ':' {
 		cleaned = strings.ToUpper(cleaned[:1]) + cleaned[1:]
 	}
 
-	// Reconstruct a canonical file URI.
+	// Reconstruct a canonical file URI. On Windows the path must start with
+	// "/" so that url.URL.String() produces "file:///C:/..." rather than the
+	// malformed "file://C:/..." (where the drive letter becomes the authority).
+	slashed := filepath.ToSlash(cleaned)
+	if !strings.HasPrefix(slashed, "/") {
+		slashed = "/" + slashed
+	}
+
 	result := &url.URL{
 		Scheme: "file",
-		Path:   filepath.ToSlash(cleaned),
+		Path:   slashed,
 	}
 
 	return DocumentURI(result.String())
