@@ -344,3 +344,39 @@ func TestDispatch_NotificationDidOpen(t *testing.T) {
 		t.Errorf("text = %q, want 'package main'", doc.Text())
 	}
 }
+
+func TestDispatch_OnDidSave(t *testing.T) {
+	var saved bool
+	s := NewServer("test", "1.0")
+	s.OnDidSave(func(ctx *Context, p *protocol.DidSaveTextDocumentParams) error {
+		if p == nil || p.TextDocument.URI != "file:///x.yaml" {
+			t.Errorf("unexpected save params: %#v", p)
+		}
+		saved = true
+		return nil
+	})
+	for _, o := range s.opts {
+		o(s)
+	}
+	initParams, _ := json.Marshal(&protocol.InitializeParams{})
+	s.dispatch(context.Background(), "initialize", json.RawMessage(initParams))
+
+	params, _ := json.Marshal(&protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        "file:///x.yaml",
+			LanguageID: "yaml",
+			Version:    1,
+			Text:       "k: v\n",
+		},
+	})
+	s.dispatchNotification(context.Background(), "textDocument/didOpen", json.RawMessage(params))
+
+	saveParams, _ := json.Marshal(&protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: "file:///x.yaml"},
+	})
+	s.dispatchNotification(context.Background(), "textDocument/didSave", json.RawMessage(saveParams))
+
+	if !saved {
+		t.Fatal("OnDidSave handler was not invoked")
+	}
+}

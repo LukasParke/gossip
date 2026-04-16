@@ -141,6 +141,15 @@ func (c *Client) Close(uri string) {
 	})
 }
 
+// Save sends a textDocument/didSave notification.
+func (c *Client) Save(uri string) {
+	c.t.Helper()
+	c.notify(protocol.MethodDidSave, &protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: protocol.DocumentURI(uri)},
+	})
+	time.Sleep(10 * time.Millisecond)
+}
+
 // Hover sends a textDocument/hover request.
 func (c *Client) Hover(uri string, pos protocol.Position) (*protocol.Hover, error) {
 	c.t.Helper()

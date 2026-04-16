@@ -133,3 +133,9 @@ func (c *ClientProxy) ReportProgress(ctx context.Context, token interface{}, val
 		Value: value,
 	})
 }
+
+// Notify sends an arbitrary JSON-RPC notification to the client. The client
+// must understand method; this is used for custom LSP extensions.
+func (c *ClientProxy) Notify(ctx context.Context, method string, params interface{}) error {
+	return c.conn.Notify(ctx, method, params)
+}
